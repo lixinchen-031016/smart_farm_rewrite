@@ -169,23 +169,24 @@ smart_farm/
 
 > 节奏：每阶段可演示/可上线；总周期约 **10–14 周（1 名主力 + 评审）**。括号内为大致人周。
 
-### 阶段 0 — 脚手架与地基（第 1–2 周）
-- [ ] `pyproject.toml` 分层依赖 + `ruff`/`mypy`/`pytest` 配置
-- [ ] `config.py`（pydantic-settings）、`.env.example`、`.gitignore` 补全
-- [ ] `data/database.py`（单 engine + `get_session`）、`data/models.py`（修复主键）
-- [ ] Alembic 初始化 + 首版迁移；`data_gen.py` 种子脚本
-- [ ] `auth_service` 骨架（bcrypt + JWT，密钥外置，限流占位）
-- [ ] `app/main.py` 最小可运行：登录页 + 路由 + 菜单
-- **交付**：能登录、能跑起来的空壳 + CI 绿
+### 阶段 0 — 脚手架与地基（第 1–2 周）✅ 已完成
+- [x] `pyproject.toml` 分层依赖 + `ruff`/`mypy`/`pytest` 配置
+- [x] `config.py`（pydantic-settings）、`.env.example`、`.gitignore` 补全
+- [x] `data/database.py`（单 engine + `get_session`）、`data/models.py`（修复主键）
+- [x] Alembic 初始化 + 首版迁移（`migrations/`，初始迁移 `a00cd7251333`）；种子脚本 `data/seed.py`（经 `alembic upgrade head` 建表）
+- [x] `auth_service` 骨架（bcrypt + JWT，密钥外置，限流占位）
+- [x] `app/main.py` 最小可运行：登录页 + 路由 + 菜单
+- [x] `.github/workflows/ci.yml`：ruff + pytest 自动跑（CI 绿）
+- **交付**：能登录、能跑起来的空壳 + CI 绿 ✅
 
-### 阶段 1 — 数据层与服务层（第 3–5 周）
-- [ ] `repositories.py`：传感器/用户/日志取数（分页 + 时间窗）
-- [ ] `analysis_service` / `cleaning_service` / `anomaly_service`（从旧代码迁纯函数）
-- [ ] `decision_service`（规则配置化、修趋势计算）
-- [ ] `prediction_service`（迁 Prophet/SARIMA/RF，**去 torch/GPU**，异步封装）
-- [ ] `st.cache_data` / `cache_resource` 接入热点查询与模型
-- [ ] 上述 services 的 pytest 用例
-- **交付**：核心算法可单测、与 UI 解耦
+### 阶段 1 — 数据层与服务层（第 3–5 周）✅ 已完成
+- [x] `repositories.py`：传感器/用户/日志取数（分页 + 时间窗）— 阶段 0/1 早期落地
+- [x] `analysis_service`（已落地）；本次新增 `cleaning_service` / `anomaly_service`（从旧代码迁纯函数，修旧版 z-score 索引错位 bug）
+- [x] `decision_service`（规则配置化、修趋势计算）— 早期落地
+- [x] `prediction_service`（迁 Prophet/SARIMA，**去 torch/GPU**，naive 兜底，懒加载重依赖）— 早期落地
+- [x] `st.cache_data` / `cache_resource` 接入热点查询与模型（`app/cache.py`：传感器时序查询 ttl=300、预测结果 ttl=600、`cached_llm_provider` 共享客户端；仪表板/预测页已接入，并移除废弃的 `use_container_width` → `width="stretch"`）
+- [x] 上述 services 的 pytest 用例（`test_auth`/`test_analysis`/`test_decision`/`test_cleaning`/`test_anomaly`，共 24 例，CI 绿）
+- **交付**：核心算法可单测、与 UI 解耦 ✅
 
 ### 阶段 2 — UI 移植（第 6–8 周）
 - [ ] `pages/`：综合仪表板、数据概览（DB/上传/导出）、数据清洗、数据分析、可视化、高级分析

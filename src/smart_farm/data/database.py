@@ -8,6 +8,7 @@
 
 import logging
 from contextlib import contextmanager
+from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -46,9 +47,20 @@ def get_session():
         session.close()
 
 
-def init_db() -> None:
-    """开发环境快速建表（生产请用 Alembic 迁移）。"""
-    from smart_farm.data.models import Base
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
-    Base.metadata.create_all(engine)
-    logger.info("数据库表已初始化: %s", _settings.database_url)
+
+def run_migrations() -> None:
+    """执行 Alembic 迁移至最新版本（建表/升级的规范方式，单一事实来源）。"""
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(_PROJECT_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_PROJECT_ROOT / "migrations"))
+    command.upgrade(cfg, "head")
+    logger.info("数据库迁移已执行至 head: %s", _settings.database_url)
+
+
+def init_db() -> None:
+    """兼容别名：执行 Alembic 迁移（建议直接用 `alembic upgrade head`）。"""
+    run_migrations()

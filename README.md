@@ -16,6 +16,10 @@
 # 安装依赖（含开发依赖）
 uv pip install -e '.[dev]'
 
+# 初始化数据库结构（Alembic 迁移，单一事实来源）
+python scripts/migrate.py upgrade
+# 或：alembic upgrade head
+
 # 生成演示数据
 python -m smart_farm.data.seed
 
@@ -24,6 +28,19 @@ streamlit run src/smart_farm/app/main.py
 ```
 
 默认账号（seed 生成）：`admin` / `Admin@123456`
+
+## 数据库迁移（Alembic）
+
+建表/升级统一通过 Alembic，模型 `smart_farm.data.models.Base` 为单一事实来源：
+
+```bash
+python scripts/migrate.py upgrade            # 升级到最新
+python scripts/migrate.py downgrade base     # 回滚到初始
+python scripts/migrate.py revision -m "说明"  # 对比模型生成新迁移
+```
+
+> 开发环境也可用 `python -m smart_farm.data.seed`（内部调用迁移）；请勿再使用
+> `Base.metadata.create_all`，以免与 Alembic 版本记录冲突。
 
 ## 结构
 

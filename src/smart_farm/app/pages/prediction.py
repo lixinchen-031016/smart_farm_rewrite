@@ -2,13 +2,10 @@
 
 from datetime import datetime, timedelta
 
-import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
-from smart_farm.data import repositories as repo
-from smart_farm.data.database import get_session
-from smart_farm.services import prediction_service as ps
+from smart_farm.app import cache
 
 METRIC_MAP = {
     "空气温度": ("air_temperature_humidity", "temperature"),
@@ -28,19 +25,10 @@ def show() -> None:
     days = st.slider("预测天数", 3, 30, 7)
 
     if st.button("执行预测", type="primary"):
-        with get_session() as s:
-            since = datetime.now() - timedelta(days=60)
-            rows = repo.get_sensor_readings(s, metric, start=since, limit=5000)
-        if not rows:
-            st.warning("暂无足够历史数据，请先生成演示数据（`python -m smart_farm.data.seed`）。")
-            return
-
-        values = [getattr(r, col) for r in rows]
-        timestamps = [r.timestamp for r in rows]
-
+        since = datetime.now() - timedelta(days=60)
         with st.spinner("预测中..."):
             try:
-                result = ps.forecast(values, timestamps, method=method, prediction_days=days)
+                result = cache.cached_forecast(metric, col, method, days, since.isoformat())
             except RuntimeError as e:
                 st.error(str(e))
                 return
@@ -48,7 +36,20 @@ def show() -> None:
         st.caption(f"方法：{result.method} ｜ {result.explanation}")
         hist = result.history.rename(columns={"y": "实际值"})
         fc = result.forecast.rename(columns={"yhat": "预测值"})
-        combined = pd.concat([hist, fc[["ds", "预测值", "yhat_lower", "yhat_upper"]]], ignore_index=True)
-        fig = px.line(combined, x="ds", y=["实际值", "预测值"])
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+
+        # 实际值 + 预测值 + 置信区间阴影带
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=list(fc["ds"]) + list(fc["ds"][::-1]),
+            y=list(fc["yhat_upper"]) + list(fc["yhat_lower"][::-1]),
+            fill="toself",
+            fillcolor="rgba(255,193,7,0.20)",
+            line=dict(color="rgba(255,193,7,0)"),
+            name="置信区间",
+            hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(x=hist["ds"], y=hist["实际值"], mode="lines", name="实际值"))
+        fig.add_trace(go.Scatter(x=fc["ds"], y=fc["预测值"], mode="lines+markers", name="预测值"))
+        fig.update_layout(height=420, xaxis_title="日期", yaxis_title="数值")
+        st.plotly_chart(fig, width="stretch")
+        st.caption("阴影区为预测置信区间（±1.96σ）。长模型（Prophet/SARIMA）的异步化与进度条为后续增强项。")

@@ -9,7 +9,15 @@
 import streamlit as st
 
 from smart_farm.app import auth_ui
-from smart_farm.app.pages import dashboard, data_overview, decision, prediction
+from smart_farm.app.pages import (
+    dashboard,
+    data_analysis,
+    data_cleaning,
+    data_overview,
+    decision,
+    prediction,
+    visualization,
+)
 
 st.set_page_config(
     page_title="智慧大棚数据管理平台",
@@ -22,6 +30,9 @@ st.set_page_config(
 MENU = {
     "综合监控仪表板": "dashboard",
     "数据概览": "data_overview",
+    "数据清洗与异常": "data_cleaning",
+    "数据分析": "data_analysis",
+    "可视化": "visualization",
     "本地数据预测": "prediction",
     "自动化决策": "decision",
 }
@@ -65,6 +76,12 @@ def main() -> None:
         dashboard.show()
     elif page == "data_overview":
         data_overview.show()
+    elif page == "data_cleaning":
+        data_cleaning.show()
+    elif page == "data_analysis":
+        data_analysis.show()
+    elif page == "visualization":
+        visualization.show()
     elif page == "prediction":
         prediction.show()
     elif page == "decision":
