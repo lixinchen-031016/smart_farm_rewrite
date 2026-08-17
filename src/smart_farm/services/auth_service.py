@@ -6,6 +6,7 @@
 - 登录失败限流：当前为进程内计数（便于演示），结构上可平滑替换为 Redis/DB 实现。
 """
 
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -47,6 +48,79 @@ def check_password_complexity(password: str) -> bool:
     return has_lower and has_upper and has_digit and has_special
 
 
+_SPECIAL_CHARS = r'[!@#$%^&*(),.?"{}|<>\[\]\\/_+=~-]'
+
+
+def evaluate_password_strength(password: str) -> tuple[str, int, list[str]]:
+    """评估密码强度（对齐旧库评分规则）。
+
+    Returns:
+        (强度等级, 分数 0-100, 反馈列表)
+        - 等级: high(≥70) / medium(≥40) / low
+        - 分数由长度、字符类型、复杂性加分与常见模式扣分累加得到
+    """
+    if not password:
+        return "low", 0, []
+
+    score = 0
+    feedback: list[str] = []
+
+    # 长度检查
+    if len(password) >= 12:
+        score += 25
+        feedback.append("密码长度充足 (≥12位)")
+    elif len(password) >= 8:
+        score += 15
+        feedback.append("密码长度一般 (8-11位)")
+    else:
+        feedback.append("密码长度不足 (<8位)")
+
+    # 字符类型检查
+    has_lower = bool(re.search(r"[a-z]", password))
+    has_upper = bool(re.search(r"[A-Z]", password))
+    has_digit = bool(re.search(r"[0-9]", password))
+    has_special = bool(re.search(_SPECIAL_CHARS, password))
+    char_types = sum([has_lower, has_upper, has_digit, has_special])
+
+    if char_types >= 3:
+        score += 30
+        feedback.append("包含多种字符类型")
+    elif char_types == 2:
+        score += 15
+        feedback.append("字符类型较少")
+    else:
+        feedback.append("字符类型单一")
+
+    # 复杂性加分
+    if has_lower and has_upper:
+        score += 15
+    if has_digit:
+        score += 10
+    if has_special:
+        score += 20
+
+    # 常见模式扣分
+    if re.search(r"(.)\1{2,}", password):  # 连续重复字符
+        score -= 10
+        feedback.append("存在连续重复字符")
+    if re.search(r"(012|123|234|345|456|567|678|789|890)", password):  # 连续数字
+        score -= 10
+        feedback.append("存在连续数字序列")
+    if re.search(r"(abc|bcd|cde|def|efg|fgh|ghi|hij|ijk)", password.lower()):  # 连续字母
+        score -= 10
+        feedback.append("存在连续字母序列")
+
+    # 确定强度等级
+    if score >= 70:
+        strength = "high"
+    elif score >= 40:
+        strength = "medium"
+    else:
+        strength = "low"
+
+    return strength, max(0, min(100, score)), feedback
+
+
 # ----------------------------- JWT -----------------------------
 
 
@@ -74,15 +148,15 @@ def decode_access_token(token: str) -> Optional[dict]:
 
 
 class LoginLimiter:
-    """登录失败限流。
+    """登录失败限流（对齐旧库：10 次失败 / 30 秒锁定）。
 
     当前为进程内内存实现（演示用）。生产环境应替换为 Redis / DB 后端，
     以保证多 worker、重启后仍生效（旧版内存字典在重启后失效）。
     """
 
-    def __init__(self, max_attempts: int = 5, window_minutes: int = 15):
+    def __init__(self, max_attempts: int = 10, window_seconds: int = 30):
         self.max_attempts = max_attempts
-        self.window = timedelta(minutes=window_minutes)
+        self.window = timedelta(seconds=window_seconds)
         self._store: dict[str, list[datetime]] = {}
         self._lock = threading.Lock()
 

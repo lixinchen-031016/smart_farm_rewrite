@@ -8,13 +8,18 @@
 from datetime import datetime
 from typing import Optional, Sequence
 
+import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from smart_farm.data.models import (
     SENSOR_MODELS,
+    AirTemperatureHumidity,
     Greenhouse,
+    LightIntensity,
     OperationLog,
+    SoilMoisture,
+    SoilNutrient,
     User,
 )
 
@@ -83,6 +88,46 @@ def add_sensor_reading(session: Session, metric: str, value=None, greenhouse_id=
     return row
 
 
+def fetch_data_in_bulk(
+    session: Session,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    limit: int = 100000,
+) -> pd.DataFrame:
+    """按时间窗批量拉取全部传感器（多表 LEFT JOIN，对齐旧库输出列）。
+
+    以 `air_temperature_humidity` 为左表 JOIN 其余 3 张传感器表，
+    输出列：timestamp, temperature, humidity, soil_moisture, soil_nutrient, light_intensity。
+    """
+    from sqlalchemy import outerjoin, select
+
+    at = AirTemperatureHumidity
+    sm = SoilMoisture
+    sn = SoilNutrient
+    li = LightIntensity
+    stmt = select(
+        at.timestamp.label("timestamp"),
+        at.temperature.label("temperature"),
+        at.humidity.label("humidity"),
+        sm.value.label("soil_moisture"),
+        sn.value.label("soil_nutrient"),
+        li.value.label("light_intensity"),
+    ).select_from(
+        outerjoin(
+            outerjoin(outerjoin(at, sm, at.timestamp == sm.timestamp), sn, at.timestamp == sn.timestamp),
+            li,
+            at.timestamp == li.timestamp,
+        )
+    )
+    if start is not None:
+        stmt = stmt.where(at.timestamp >= start)
+    if end is not None:
+        stmt = stmt.where(at.timestamp <= end)
+    stmt = stmt.order_by(at.timestamp.asc()).limit(limit)
+    rows = session.execute(stmt).all()
+    return pd.DataFrame(rows, columns=list(stmt.selected_columns.keys()))
+
+
 # ----------------------------- 用户 -----------------------------
 
 
@@ -96,6 +141,7 @@ def create_user(
     password_hash: str,
     role: str = "user",
     greenhouse_id: Optional[int] = None,
+    admin_request: bool = False,
 ) -> User:
     user = User(
         username=username,
@@ -103,6 +149,8 @@ def create_user(
         last_login_time=datetime.now(),
         role=role,
         greenhouse_id=greenhouse_id,
+        admin_request=admin_request,
+        admin_request_time=datetime.now() if admin_request else None,
     )
     session.add(user)
     session.flush()
@@ -113,10 +161,62 @@ def list_users(session: Session) -> Sequence[User]:
     return session.execute(select(User).order_by(User.id)).scalars().all()
 
 
+def list_admin_requests(session: Session) -> Sequence[User]:
+    """列出待审批的管理员申请（admin_request=True）。"""
+    return (
+        session.execute(
+            select(User)
+            .where(User.admin_request.is_(True))
+            .order_by(User.admin_request_time.asc())
+        )
+        .scalars()
+        .all()
+    )
+
+
+def approve_admin_request(session: Session, user_id: int) -> bool:
+    """批准管理员申请：角色升为 admin，清除申请标志。"""
+    user = session.get(User, user_id)
+    if not user or not user.admin_request:
+        return False
+    user.role = "admin"
+    user.admin_request = False
+    user.admin_request_time = None
+    return True
+
+
+def reject_admin_request(session: Session, user_id: int) -> bool:
+    """拒绝管理员申请：清除申请标志（保持普通用户）。"""
+    user = session.get(User, user_id)
+    if not user or not user.admin_request:
+        return False
+    user.admin_request = False
+    user.admin_request_time = None
+    return True
+
+
 def update_user_role(session: Session, user_id: int, role: str) -> None:
     user = session.get(User, user_id)
     if user:
         user.role = role
+
+
+def update_user_password(session: Session, user_id: int, password_hash: str) -> bool:
+    """重置用户密码（bcrypt 哈希）。用户不存在返回 False。"""
+    user = session.get(User, user_id)
+    if not user:
+        return False
+    user.password = password_hash
+    return True
+
+
+def delete_user(session: Session, user_id: int) -> bool:
+    """删除用户（调用方负责禁止删除自身）。用户不存在返回 False。"""
+    user = session.get(User, user_id)
+    if not user:
+        return False
+    session.delete(user)
+    return True
 
 
 # ----------------------------- 大棚 -----------------------------

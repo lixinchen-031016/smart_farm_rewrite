@@ -1,4 +1,4 @@
-"""用户管理页面（管理员专属）。列出用户、修改角色、创建用户。"""
+"""用户管理页面（管理员专属）。审批、改角色、建用户、改密、编辑/删除。"""
 
 import pandas as pd
 import streamlit as st
@@ -19,6 +19,30 @@ if not require_admin():
 
 current_user = st.session_state.get("username")
 
+# ---------------- 管理员申请审批 ----------------
+with get_session() as s:
+    pending = repo.list_admin_requests(s)
+
+if pending:
+    st.subheader("管理员申请审批")
+    for u in pending:
+        c1, c2, c3 = st.columns([3, 1, 1])
+        c1.markdown(f"**{u.username}** 申请于 {u.admin_request_time:%Y-%m-%d %H:%M}")
+        with c2:
+            if st.button("批准", key=f"approve_{u.id}", icon=":material/check:"):
+                with get_session() as s2:
+                    if repo.approve_admin_request(s2, u.id):
+                        repo.add_log(s2, "INFO", current_user, "用户管理", f"批准 {u.username} 的管理员申请")
+                        st.success(f"已批准 {u.username} 为管理员。")
+                st.rerun()
+        with c3:
+            if st.button("拒绝", key=f"reject_{u.id}", icon=":material/close:"):
+                with get_session() as s2:
+                    if repo.reject_admin_request(s2, u.id):
+                        repo.add_log(s2, "INFO", current_user, "用户管理", f"拒绝 {u.username} 的管理员申请")
+                        st.info(f"已拒绝 {u.username} 的管理员申请。")
+                st.rerun()
+
 # ---------------- 用户列表 ----------------
 with get_session() as s:
     users = repo.list_users(s)
@@ -27,8 +51,15 @@ if not users:
     st.stop()
 
 df = pd.DataFrame(
-    [{"用户名": u.username, "角色": u.role, "最后登录": u.last_login_time} for u in users]
+    [{
+        "ID": u.id,
+        "用户名": u.username,
+        "角色": u.role,
+        "管理员申请中": "是" if u.admin_request else "",
+        "最后登录": u.last_login_time,
+    } for u in users]
 )
+st.subheader("用户列表")
 st.dataframe(df, width="stretch")
 
 # ---------------- 修改角色 ----------------
@@ -45,6 +76,54 @@ with st.form("role_form"):
                 repo.add_log(s, "INFO", current_user, "用户管理", f"将 {target} 角色改为 {new_role}")
             st.success(f"已将 {target} 的角色更新为 {new_role}。")
             st.rerun()
+
+# ---------------- 修改密码 ----------------
+st.subheader("重置密码")
+with st.form("reset_pwd_form"):
+    pwd_target = st.selectbox("选择用户", [u.username for u in users], key="pwd_target")
+    new_pw = st.text_input("新密码", type="password")
+    confirm_pw = st.text_input("确认新密码", type="password")
+    if st.form_submit_button("重置密码"):
+        if new_pw != confirm_pw:
+            st.error("两次密码不一致。")
+        elif not auth.check_password_complexity(new_pw):
+            st.warning("密码至少 8 位，且含大小写字母、数字、特殊字符。")
+        else:
+            with get_session() as s:
+                repo.update_user_password(s, _user_id(s, pwd_target), auth.hash_password(new_pw))
+                repo.add_log(s, "INFO", current_user, "用户管理", f"重置 {pwd_target} 的密码")
+            st.success(f"已重置 {pwd_target} 的密码。")
+
+# ---------------- 编辑 / 删除 ----------------
+st.subheader("编辑 / 删除用户")
+with st.form("edit_delete_form"):
+    op_target = st.selectbox("选择用户", [u.username for u in users], key="op_target")
+    op = st.selectbox("操作", ["编辑用户名", "删除用户"])
+    new_name = None
+    if op == "编辑用户名":
+        new_name = st.text_input("新用户名")
+    if st.form_submit_button("执行"):
+        if op_target == current_user and op == "删除用户":
+            st.error("不能删除当前登录的用户。")
+        elif op == "删除用户":
+            with get_session() as s:
+                ok = repo.delete_user(s, _user_id(s, op_target))
+                if ok:
+                    repo.add_log(s, "INFO", current_user, "用户管理", f"删除用户 {op_target}")
+                    st.success(f"已删除用户 {op_target}。")
+                    st.rerun()
+        else:
+            if not new_name:
+                st.error("请输入新用户名。")
+            else:
+                with get_session() as s:
+                    if repo.get_user_by_username(s, new_name):
+                        st.error("该用户名已存在。")
+                    else:
+                        repo.get_user_by_username(s, op_target).username = new_name
+                        repo.add_log(s, "INFO", current_user, "用户管理", f"将 {op_target} 重命名为 {new_name}")
+                        st.success(f"已将 {op_target} 重命名为 {new_name}。")
+                        st.rerun()
 
 # ---------------- 创建用户 ----------------
 st.subheader("新建用户")
