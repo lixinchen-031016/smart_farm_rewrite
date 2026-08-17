@@ -16,6 +16,7 @@ MODULE_REGISTRY = [
     ("数据概览", "data_overview", "启用", "DB 浏览 + 上传/导出"),
     ("数据清洗与异常", "data_cleaning", "启用", "异常检测 + 清洗"),
     ("数据分析", "data_analysis", "启用", "描述统计/相关性/聚合"),
+    ("高级分析", "advanced_analysis", "启用", "分组聚合 + 智能洞察"),
     ("可视化", "visualization", "启用", "折线/直方图/箱线/散点"),
     ("本地数据预测", "prediction", "启用", "Prophet/SARIMA/naive"),
     ("自动化决策", "decision", "启用", "规则引擎"),

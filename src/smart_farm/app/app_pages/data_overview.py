@@ -1,4 +1,4 @@
-"""数据概览页面：数据库浏览 + 上传 CSV/Excel/JSON，预览与导出。"""
+"""数据概览页面：数据库浏览（含多表 JOIN 起止日期取数）+ 上传 CSV/Excel/JSON，预览与导出。"""
 
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -7,6 +7,8 @@ import pandas as pd
 import streamlit as st
 
 from smart_farm.app import cache
+from smart_farm.data import repositories as repo
+from smart_farm.data.database import get_session
 
 METRIC_COLS = {
     "air_temperature_humidity": [("温度", "temperature"), ("湿度", "humidity")],
@@ -37,30 +39,69 @@ def _download_bytes(data: pd.DataFrame, fmt: str) -> tuple[bytes, str, str]:
     return data.to_json(orient="records", force_ascii=False).encode(), "application/json", "json"
 
 
+def _render_download(data: pd.DataFrame, fmt: str) -> None:
+    data_bytes, mime, ext = _download_bytes(data, fmt)
+    st.download_button(
+        f"下载 {fmt} 文件",
+        data=data_bytes,
+        file_name=f"exported_data.{ext}",
+        mime=mime,
+        icon=":material/download:",
+    )
+
+
 st.title("数据概览")
 tab1, tab2 = st.tabs(["数据库数据", "上传与导出"])
 
 with tab1:
-    st.subheader("数据库传感器数据")
-    metric = st.selectbox("选择指标", list(METRIC_COLS.keys()), key="db_metric")
-    sub = st.selectbox("选择字段", METRIC_COLS[metric], format_func=lambda x: x[0], key="db_sub")
-    _, col = sub
-    days = st.slider("时间范围（天）", 1, 90, 30, key="db_days")
-    since = datetime.now() - timedelta(days=days)
-    df = cache.cached_sensor_df(metric, col, since.isoformat(), limit=5000)
-    if df.empty:
-        st.info("暂无数据，请先运行 `python -m smart_farm.data.seed` 生成演示数据。")
+    mode = st.segmented_control("数据来源", ["按指标浏览", "全量多表查询"], default="按指标浏览")
+
+    if mode == "按指标浏览":
+        st.subheader("数据库传感器数据")
+        metric = st.selectbox("选择指标", list(METRIC_COLS.keys()), key="db_metric")
+        sub = st.selectbox("选择字段", METRIC_COLS[metric], format_func=lambda x: x[0], key="db_sub")
+        _, col = sub
+        days = st.slider("时间范围（天）", 1, 90, 30, key="db_days")
+        since = datetime.now() - timedelta(days=days)
+        df = cache.cached_sensor_df(metric, col, since.isoformat(), limit=5000)
+        if df.empty:
+            st.info("暂无数据，请先运行 `python -m smart_farm.data.seed` 生成演示数据。")
+        else:
+            st.caption(f"共 {len(df)} 行（最近 {days} 天）")
+            st.dataframe(df, width="stretch")
+            _render_download(df, "CSV")
     else:
-        st.caption(f"共 {len(df)} 行（最近 {days} 天）")
-        st.dataframe(df, width="stretch")
-        data, mime, ext = _download_bytes(df, "CSV")
-        st.download_button(
-            "下载 CSV",
-            data=data,
-            file_name=f"exported_data.{ext}",
-            mime=mime,
-            icon=":material/download:",
-        )
+        st.subheader("全量多表查询（多表 JOIN）")
+        c1, c2 = st.columns(2)
+        with c1:
+            start_date = st.date_input("起始日期", value=(datetime.now() - timedelta(days=7)).date())
+        with c2:
+            end_date = st.date_input("结束日期", value=datetime.now().date())
+        if st.button("查询数据", type="primary", icon=":material/search:"):
+            if start_date > end_date:
+                st.error("起始日期不能晚于结束日期。")
+            else:
+                start = datetime.combine(start_date, datetime.min.time())
+                end = datetime.combine(end_date, datetime.max.time())
+                with st.spinner("查询中..."):
+                    with get_session() as s:
+                        df = repo.fetch_data_in_bulk(s, start=start, end=end)
+                if df.empty:
+                    st.info("所选时间范围内无数据。")
+                else:
+                    st.caption(f"共 {len(df)} 行（{start_date} ~ {end_date}）")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("行数", df.shape[0])
+                    c2.metric("列数", df.shape[1])
+                    c3.metric("缺失值", int(df.isnull().sum().sum()))
+                    st.dataframe(df, width="stretch")
+                    st.subheader("字段类型")
+                    dtype_df = pd.DataFrame(
+                        {"字段": df.columns, "类型": [str(t) for t in df.dtypes]}
+                    )
+                    st.dataframe(dtype_df, width="stretch")
+                    fmt = st.selectbox("导出格式", ["CSV", "Excel", "JSON"], key="bulk_fmt")
+                    _render_download(df, fmt)
 
 with tab2:
     st.subheader("上传与导出")
@@ -85,11 +126,4 @@ with tab2:
         st.subheader("数据导出")
         fmt = st.radio("导出格式", ["CSV", "Excel", "JSON"])
         if st.button("导出", type="primary", icon=":material/file_upload:"):
-            data_bytes, mime, ext = _download_bytes(data, fmt)
-            st.download_button(
-                f"下载 {fmt} 文件",
-                data=data_bytes,
-                file_name=f"exported_data.{ext}",
-                mime=mime,
-                icon=":material/download:",
-            )
+            _render_download(data, fmt)

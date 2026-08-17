@@ -1,4 +1,4 @@
-"""数据分析页面。调用 `analysis_service`（描述统计 / 相关性 / 分组聚合）。"""
+"""数据分析页面。调用 `analysis_service`（描述统计 / 相关性 / 智能解读 / 分组聚合）。"""
 
 from datetime import datetime, timedelta
 
@@ -40,12 +40,33 @@ if df.empty:
     st.info("暂无数据，请先运行 `python -m smart_farm.data.seed` 生成演示数据。")
     st.stop()
 
-tab1, tab2, tab3 = st.tabs(["描述统计", "相关性", "分组聚合"])
+tab1, tab2, tab3, tab4 = st.tabs(["智能解读", "描述统计", "相关性", "分组聚合"])
 
 with tab1:
-    st.dataframe(az.describe_data(df), width="stretch")
+    desc, corr, exp_lines, corr_lines = az.enhanced_data_analysis(df)
+    st.subheader("数据洞察解读")
+    for line in exp_lines:
+        st.markdown(f"- {line}")
+
+    st.subheader("指标关联解读")
+    for line in corr_lines:
+        st.markdown(f"- {line}")
+
+    st.subheader("智能洞察与建议")
+    insights = az.provide_smart_insights(df)
+    if insights:
+        for insight in insights:
+            st.markdown(f"- {insight}")
+    else:
+        st.info("数据质量良好，未发现明显问题。")
+
+    with st.expander("原始统计表"):
+        st.dataframe(desc, width="stretch")
 
 with tab2:
+    st.dataframe(az.describe_data(df), width="stretch")
+
+with tab3:
     corr = az.calculate_correlation(df)
     if corr is None:
         st.info("数值列不足 2 列，无法计算相关性矩阵。")
@@ -56,7 +77,7 @@ with tab2:
         st.plotly_chart(fig, width="stretch")
         st.caption("取值范围 [-1, 1]：越接近 ±1 相关性越强。")
 
-with tab3:
+with tab4:
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
     work = df.copy()
     work["星期"] = work["timestamp"].dt.dayofweek
@@ -70,5 +91,10 @@ with tab3:
         fig = px.bar(result, x=group_col, y=result.columns[1], title=f"{agg_col} 按{group_col}{agg_func}")
         fig.update_layout(height=380)
         st.plotly_chart(fig, width="stretch")
+        # 最高/最低分组洞察
+        best = result.iloc[result[result.columns[1]].idxmax()]
+        worst = result.iloc[result[result.columns[1]].idxmin()]
+        st.info(f"**{group_col}={best[group_col]}** 时 {agg_col} 最高（{best[result.columns[1]]:.2f}）；"
+                f"**{group_col}={worst[group_col]}** 时最低（{worst[result.columns[1]]:.2f}）。")
     except ValueError as e:
         st.error(str(e))
