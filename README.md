@@ -58,11 +58,11 @@ smart_farm/
 │   │   ├── prediction_service.py
 │   │   └── decision_service.py
 │   └── app/                  # Streamlit UI（仅渲染）
-│       ├── main.py           # 入口 / 路由 / 菜单 / 角色守卫
+│       ├── main.py           # 入口：st.navigation + st.Page + 角色守卫
 │       ├── auth_ui.py
 │       ├── cache.py          # @st.cache_data 热点查询与预测
 │       ├── guards.py         # require_admin()
-│       └── pages/            # 各页面（仅渲染）
+│       └── app_pages/        # 各页面（直接脚本，仅渲染）
 ├── tests/                    # pytest 覆盖 services
 ├── scripts/migrate.py        # 迁移便捷命令
 └── docs/rewrite_roadmap.md   # 重写路线图
@@ -143,7 +143,11 @@ docker compose up -d --build
 ## 实现说明
 
 - 所有算法（预测、清洗、异常、分析、决策）位于 `services/`，UI 仅负责渲染与取数。
+- 导航使用 `st.navigation` + `st.Page` + `app_pages/` 目录（遵循 developing-with-streamlit 技能，
+  替代 legacy `pages/` 自动发现）；页面为直接脚本，不包裹 `show()` 函数。
 - 热点查询与预测结果经 `app/cache.py` 的 `@st.cache_data(ttl=, max_entries=)` 缓存，防止无限增长。
 - 长预测任务（Prophet / SARIMA）当前为同步执行并带超时兜底；后续可改为后台任务 + 进度。
-- 角色守卫 `require_admin()` 基于 `st.session_state["role"]`，管理页对普通用户隐藏且不可直访。
+- 角色守卫 `require_admin()` 基于 `st.session_state["role"]`；管理页仅在管理员角色时注入导航，
+  且页面内部仍二次校验（普通用户直访显示无权限）。
 - 备份 / 恢复以 JSON 快照形式导出 / 导入，ORM 参数化重建，显式 `commit`。
+- 覆盖率门禁：`pytest` 通过 `addopts` 对 `smart_farm.services` 设 ≥70% 覆盖率下限（CI 强制执行）。

@@ -70,26 +70,31 @@ def _restore(snapshot: dict) -> int:
     return count
 
 
-def show() -> None:
-    st.title("💾 备份与恢复")
-    if not require_admin():
-        return
+st.title("备份与恢复")
+if not require_admin():
+    st.stop()
 
-    st.subheader("导出备份")
-    if st.button("生成并下载 JSON 快照", type="primary"):
-        payload = _dump()
-        st.download_button("📥 下载 backup.json", payload, file_name="smart_farm_backup.json")
+st.subheader("导出备份")
+if st.button("生成 JSON 快照", type="primary"):
+    payload = _dump()
+    st.download_button(
+        "下载 backup.json",
+        data=payload,
+        file_name="smart_farm_backup.json",
+        mime="application/json",
+        icon=":material/download:",
+    )
 
-    st.subheader("恢复备份")
-    st.warning("恢复将**覆盖**当前全部数据，请先导出备份。仅管理员可操作。")
-    uploaded = st.file_uploader("上传 backup.json", type=["json"])
-    confirm = st.checkbox("我已了解风险，确认覆盖恢复")
-    if uploaded is not None and confirm:
-        if st.button("执行恢复"):
-            try:
-                snapshot = json.loads(uploaded.read())
-                with st.spinner("恢复中..."):
-                    n = _restore(snapshot)
-                st.success(f"已恢复 {n} 条记录。")
-            except Exception as e:  # noqa: BLE001
-                st.error(f"恢复失败：{e}")
+st.subheader("恢复备份")
+st.warning("恢复将**覆盖**当前全部数据，请先导出备份。仅管理员可操作。")
+uploaded = st.file_uploader("上传 backup.json", type=["json"])
+confirm = st.checkbox("我已了解风险，确认覆盖恢复")
+if uploaded is not None and confirm:
+    if st.button("执行恢复"):
+        try:
+            snapshot = json.loads(uploaded.read())
+            with st.spinner("恢复中..."):
+                n = _restore(snapshot)
+            st.success(f"已恢复 {n} 条记录。")
+        except Exception as e:  # noqa: BLE001
+            st.error(f"恢复失败：{e}")

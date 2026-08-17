@@ -95,7 +95,7 @@ def detect_outliers_isolation_forest(
     )
     preds = model.fit_predict(scaled)
     outlier_idx = set(clean.index[preds == -1])
-    return df.index.isin(outlier_idx)
+    return pd.Series(df.index.isin(outlier_idx), index=df.index)
 
 
 def detect_anomalies(

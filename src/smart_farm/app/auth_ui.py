@@ -32,24 +32,24 @@ def _do_login(username: str, password: str) -> bool:
 
 
 def show_auth() -> None:
-    st.title("🌱 智慧大棚数据管理平台")
-    mode = st.radio("选择操作", ["登录", "注册"], horizontal=True)
+    st.title("智慧大棚数据管理平台")
+    st.caption("智慧农业数据接入、清洗、分析、预测与运维一体化平台。")
+    mode = st.segmented_control("选择操作", ["登录", "注册"], default="登录")
 
     if mode == "登录":
         with st.form("login_form"):
             username = st.text_input("用户名")
             password = st.text_input("密码", type="password")
-            if st.form_submit_button("登录", type="primary"):
+            if st.form_submit_button("登录", type="primary", icon=":material/login:"):
                 if _do_login(username, password):
                     st.success("登录成功！")
-                    st.session_state["page"] = "dashboard"
                     st.rerun()
     else:
         with st.form("register_form"):
             username = st.text_input("用户名")
             password = st.text_input("密码", type="password")
             confirm = st.text_input("确认密码", type="password")
-            if st.form_submit_button("注册", type="primary"):
+            if st.form_submit_button("注册", type="primary", icon=":material/person_add:"):
                 if not username:
                     st.error("用户名不能为空。")
                 elif password != confirm:

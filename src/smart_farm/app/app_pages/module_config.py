@@ -26,13 +26,11 @@ MODULE_REGISTRY = [
     ("备份与恢复", "backup_restore", "管理员", "数据导出/导入"),
 ]
 
+st.title("模块配置")
+if not require_admin():
+    st.stop()
 
-def show() -> None:
-    st.title("🧩 模块配置")
-    if not require_admin():
-        return
-
-    st.caption("声明式模块注册表：统一入口与启用状态，避免「禁用却可直访」的矛盾。")
-    df = pd.DataFrame(MODULE_REGISTRY, columns=["模块", "路由键", "启用状态", "说明"])
-    st.dataframe(df, width="stretch")
-    st.info("所有页面均经 `main.py` 的 MENU 统一路由，无独立可直访 URL 入口。")
+st.caption("声明式模块注册表：统一入口与启用状态，避免「禁用却可直访」的矛盾。")
+df = pd.DataFrame(MODULE_REGISTRY, columns=["模块", "路由键", "启用状态", "说明"])
+st.dataframe(df, width="stretch")
+st.info("所有页面均经 `main.py` 的 `st.navigation` 统一路由，无独立可直访 URL 入口。")

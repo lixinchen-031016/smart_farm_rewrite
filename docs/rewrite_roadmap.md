@@ -226,16 +226,20 @@ smart_farm/
 
 - **结论**：平台保留全部数据接入 / 清洗 / 分析 / 可视化 / 预测 / 决策 / 运维能力，AI 解读不作为交付项。
 
-### 阶段 5 — 收尾与增强（第 12–14 周）
-- [ ] 测试补全 + 覆盖率门禁；文档自动化（README 由代码生成，消除旧文档脱节）
-- [ ] 部署：`Dockerfile` + `compose`（强密钥占位）、`deployment.yaml` 精简
-- [ ] 可选：方案 B 统一时序表、多棚/多租户、开放 API（FastAPI 包装 services）
+### 阶段 5 — 收尾与增强（第 12–14 周）✅ 已完成
+- [x] **测试补全 + 覆盖率门禁**：新增 `tests/test_prediction.py`（naive 全路径 + SARIMA/Prophet importorskip 守卫）；`pyproject.toml` 的 pytest `addopts` 加入 `--cov=smart_farm.services --cov-fail-under=70`，CI 强制执行（当前 88%）。**顺带修复真实 bug**：`detect_outliers_isolation_forest` 原先返回 numpy 数组，与 docstring/其余方法不一致，改为返回 `pd.Series`（sklearn 安装后由测试暴露）。
+- [x] **文档自动化**：`README.md` 全面重写（功能模块 / 架构 / 目录结构 / 快速开始 / 配置 / 迁移 / 测试与质量 / Docker 部署 / 实现说明），消除与代码脱节。
+- [x] **部署**：新增 `Dockerfile`（Python 3.13-slim + 基础依赖 + scikit-learn/statsmodels 轮子，非 root，healthcheck）、`docker-entrypoint.sh`（迁移建表 + 可选 seed + 启动）、`docker-compose.yml`（app + MySQL 8.0，**强密钥占位**，全部经环境变量注入）、`.dockerignore`。
+- [x] **技能对齐优化（developing-with-streamlit）**：迁移到 `st.navigation` + `st.Page` + `app_pages/` 目录（删除 legacy `pages/` 与手动 MENU 路由）；12 个页面改为**直接脚本**（去掉 `show()` 包装）；管理页按角色注入导航 + 页面内二次守卫；emoji 图标 → **Material Symbols**（`:material/...:`）；`st.segmented_control` 替代横向 radio；base64 HTML 下载链接 → 原生 `st.download_button`；侧边栏用户信息去 `unsafe_allow_html`；`decision.py` 建议卡片改原生 `st.error/warning/info`；缓存 TTL 保持并核对规范。
+- [~] （暂缓，非阻塞）方案 B 统一时序表、多棚/多租户、开放 API（FastAPI 包装 services）、`sync_manager` 抽象、预测异步化（后台线程 + 进度 + 超时）— 记为后续增强项
+- **验证**：`ruff` 全绿；`pytest` 33 通过、1 跳过（仅 prophet 未装），服务层覆盖率 **88%**（门禁 70% 通过）；`AppTest` 12/12 页面 OK + main（admin/user/未登录）+ 登录流程 + 非管理员守卫拦截均 OK；`streamlit run` 启动 HTTP 200
+- **交付**：可部署镜像 + 覆盖率门禁 + 文档对齐 + 技能规范重构 ✅
 
 ---
 
 ## 10. 关键决策与风险
 
-- **Ollama 替代方案**：不引入任何本地模型。AI 洞察走 `LLMProvider` 抽象，默认实现为 OpenAI 兼容云 API；若后续要离线，可自行实现 `LocalProvider`（非 Ollama），与 UI/服务解耦。
+- **AI 洞察已取消**：不引入任何本地模型或云 LLM。AI 解读不作为交付项（阶段 4 已取消），平台保留全部数据与运维能力。
 - **torch 去留**：当前 `gpu_accelerator.py` 无真实训练链路，移除可显著缩减镜像；如确要 GPU 推理，单独列入 `ml` 依赖层并用 GPU 基础镜像。
 - **JWT 改造**：Streamlit 下 Cookie 需注意反向代理后的 `st.context.headers`；多实例部署建议短期会话态 + 服务端 session store（Redis）。
 - **预测阻塞**：长任务（Prophet/SARIMA）必须异步（后台线程/任务队列）+ 进度条 + 超时，否则卡死 UI。
