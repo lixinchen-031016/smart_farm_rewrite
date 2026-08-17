@@ -10,7 +10,16 @@ from smart_farm.services import auth_service as auth
 
 
 def _user_id(s, username: str) -> int:
-    return repo.get_user_by_username(s, username).id
+    user = repo.get_user_by_username(s, username)
+    if user is None:  # 修复：解引用保护（并发删除场景）
+        return -1
+    return user.id
+
+
+def _admin_count(s, exclude_user_id: int | None = None) -> int:
+    """统计 admin 数量（可排除指定用户，用于最后管理员保护）。"""
+    admins = [u for u in repo.list_users(s) if u.role == "admin" and u.id != exclude_user_id]
+    return len(admins)
 
 
 st.title("用户管理")
@@ -72,10 +81,17 @@ with st.form("role_form"):
             st.error("不能取消自己的管理员权限。")
         else:
             with get_session() as s:
-                repo.update_user_role(s, _user_id(s, target), new_role)
-                repo.add_log(s, "INFO", current_user, "用户管理", f"将 {target} 角色改为 {new_role}")
-            st.success(f"已将 {target} 的角色更新为 {new_role}。")
-            st.rerun()
+                target_id = _user_id(s, target)
+                if target_id < 0:
+                    st.error("目标用户不存在。")
+                elif new_role != "admin" and _admin_count(s, exclude_user_id=target_id) <= 0:
+                    # 修复：最后一名管理员保护，防止系统锁死
+                    st.error("不能移除最后一名管理员。")
+                else:
+                    repo.update_user_role(s, target_id, new_role)
+                    repo.add_log(s, "INFO", current_user, "用户管理", f"将 {target} 角色改为 {new_role}")
+                    st.success(f"已将 {target} 的角色更新为 {new_role}。")
+                    st.rerun()
 
 # ---------------- 修改密码 ----------------
 st.subheader("重置密码")
@@ -103,21 +119,30 @@ with st.form("edit_delete_form"):
     if op == "编辑用户名":
         new_name = st.text_input("新用户名")
     if st.form_submit_button("执行"):
-        if op_target == current_user and op == "删除用户":
-            st.error("不能删除当前登录的用户。")
-        elif op == "删除用户":
-            with get_session() as s:
-                ok = repo.delete_user(s, _user_id(s, op_target))
-                if ok:
-                    repo.add_log(s, "INFO", current_user, "用户管理", f"删除用户 {op_target}")
-                    st.success(f"已删除用户 {op_target}。")
-                    st.rerun()
-        else:
-            if not new_name:
-                st.error("请输入新用户名。")
+        with get_session() as s:
+            op_id = _user_id(s, op_target)
+            if op_id < 0:
+                st.error("目标用户不存在。")
+            elif op_target == current_user and op == "删除用户":
+                st.error("不能删除当前登录的用户。")
+            elif op == "删除用户":
+                if _admin_count(s, exclude_user_id=op_id) <= 0:
+                    # 修复：最后一名管理员保护
+                    st.error("不能删除最后一名管理员。")
+                else:
+                    ok = repo.delete_user(s, op_id)
+                    if ok:
+                        repo.add_log(s, "INFO", current_user, "用户管理", f"删除用户 {op_target}")
+                        st.success(f"已删除用户 {op_target}。")
+                        st.rerun()
             else:
-                with get_session() as s:
-                    if repo.get_user_by_username(s, new_name):
+                if not new_name:
+                    st.error("请输入新用户名。")
+                else:
+                    valid_name, name_err = auth.validate_username(new_name)
+                    if not valid_name:
+                        st.error(name_err)
+                    elif repo.get_user_by_username(s, new_name):
                         st.error("该用户名已存在。")
                     else:
                         repo.get_user_by_username(s, op_target).username = new_name
@@ -132,8 +157,9 @@ with st.form("create_user_form"):
     npw = st.text_input("初始密码", type="password")
     nrole = st.selectbox("角色", ["user", "admin"], key="new_role_sel")
     if st.form_submit_button("创建用户"):
-        if not nu:
-            st.error("用户名不能为空。")
+        valid_name, name_err = auth.validate_username(nu)
+        if not valid_name:
+            st.error(name_err)
         elif not auth.check_password_complexity(npw):
             st.warning("密码至少 8 位，且含大小写字母、数字、特殊字符。")
         else:

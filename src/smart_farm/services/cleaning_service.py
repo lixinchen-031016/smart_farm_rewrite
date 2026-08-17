@@ -205,7 +205,11 @@ class DataCleaner:
         self.statistics = {"rows_removed": 0, "values_filled": 0, "outliers_removed": 0}
 
     def apply_rule(self, df: pd.DataFrame, rule: DataCleaningRule) -> tuple[pd.DataFrame, dict]:
-        """按规则清洗，返回 (清洗后 DataFrame, 报告)。"""
+        """按规则清洗，返回 (清洗后 DataFrame, 报告)。
+
+        修复：每次调用重置 statistics，避免同实例多次调用统计值累积。
+        """
+        self.statistics = {"rows_removed": 0, "values_filled": 0, "outliers_removed": 0}
         report: dict[str, Any] = {
             "original_shape": df.shape,
             "operations": [],

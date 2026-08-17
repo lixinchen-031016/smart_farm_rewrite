@@ -85,12 +85,18 @@ def _run_univariate(metric_label: str, model_type: str, days: int, cp: float, se
 
     if model_type == "纯 Prophet":
         try:
-            result = ps.prophet_forecast(values, timestamps, days)
+            result = ps.prophet_forecast(
+                values, timestamps, days,
+                changepoint_prior_scale=cp, seasonality_prior_scale=season,
+            )
         except RuntimeError as e:
             st.error(str(e))
             return
     else:
-        result = ps.hybrid_forecast(values, timestamps, days)
+        result = ps.hybrid_forecast(
+            values, timestamps, days,
+            changepoint_prior_scale=cp, seasonality_prior_scale=season,
+        )
 
     _render_forecast_chart(result, f"{metric_label} 预测（{days} 天）")
     _render_score(result, values)

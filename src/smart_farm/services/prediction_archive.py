@@ -32,6 +32,8 @@ class PredictionArchive:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.max_records = max_records
         self._lock = threading.Lock()
+        # 修复：建表只在初始化时执行一次（旧版每次连接都 DDL+commit）
+        self._ensure_schema()
 
     @property
     def history_db_path(self) -> Path:
@@ -39,28 +41,33 @@ class PredictionArchive:
 
     # ----------------------------- 数据库 -----------------------------
 
-    def _connect(self) -> sqlite3.Connection:
+    def _ensure_schema(self) -> None:
         conn = sqlite3.connect(self.history_db_path)
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS prediction_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                prediction_id TEXT UNIQUE NOT NULL,
-                prediction_type TEXT NOT NULL,
-                model_type TEXT NOT NULL,
-                prediction_days INTEGER,
-                created_at TEXT NOT NULL,
-                rmse REAL DEFAULT 0,
-                r_squared REAL DEFAULT 0,
-                data_points INTEGER DEFAULT 0,
-                file_path TEXT,
-                metadata TEXT,
-                status TEXT DEFAULT 'ok'
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS prediction_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    prediction_id TEXT UNIQUE NOT NULL,
+                    prediction_type TEXT NOT NULL,
+                    model_type TEXT NOT NULL,
+                    prediction_days INTEGER,
+                    created_at TEXT NOT NULL,
+                    rmse REAL DEFAULT 0,
+                    r_squared REAL DEFAULT 0,
+                    data_points INTEGER DEFAULT 0,
+                    file_path TEXT,
+                    metadata TEXT,
+                    status TEXT DEFAULT 'ok'
+                )
+                """
             )
-            """
-        )
-        conn.commit()
-        return conn
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(self.history_db_path)
 
     @staticmethod
     def _generate_prediction_id(prediction_type: str) -> str:
@@ -83,7 +90,10 @@ class PredictionArchive:
         additional_metrics: Optional[dict[str, Any]] = None,
         username: str = "system",
     ) -> dict[str, str]:
-        """保存一次预测结果：CSV + MD + SQLite。返回 {status, prediction_id, csv_path, markdown_path, timestamp}。"""
+        """保存一次预测结果：CSV + MD + SQLite。返回 {status, prediction_id, csv_path, markdown_path, timestamp}。
+
+        修复：DB 写入失败时清理已落盘的 CSV/MD（防孤儿文件）。
+        """
         with self._lock:
             prediction_id = self._generate_prediction_id(prediction_type)
             timestamp = datetime.now()
@@ -95,19 +105,28 @@ class PredictionArchive:
                 additional_metrics, username,
             )
 
-            self._insert_history(
-                prediction_id=prediction_id,
-                prediction_type=prediction_type,
-                model_type=model_type,
-                prediction_days=prediction_days,
-                created_at=timestamp.isoformat(),
-                rmse=rmse,
-                r_squared=r_squared,
-                data_points=len(historical_data),
-                file_path=str(csv_path),
-                metadata=json.dumps(additional_metrics or {}, ensure_ascii=False),
-            )
-            self._cleanup_old_records()
+            try:
+                self._insert_history(
+                    prediction_id=prediction_id,
+                    prediction_type=prediction_type,
+                    model_type=model_type,
+                    prediction_days=prediction_days,
+                    created_at=timestamp.isoformat(),
+                    rmse=rmse,
+                    r_squared=r_squared,
+                    data_points=len(historical_data),
+                    file_path=str(csv_path),
+                    metadata=json.dumps(additional_metrics or {}, ensure_ascii=False),
+                )
+                self._cleanup_old_records()
+            except Exception:  # noqa: BLE001
+                # DB 写入失败 → 清理已写文件，保持目录与 DB 一致
+                for p in (csv_path, md_path):
+                    try:
+                        p.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                raise
 
             return {
                 "status": "ok",

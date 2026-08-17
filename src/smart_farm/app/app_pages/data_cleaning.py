@@ -29,8 +29,9 @@ METRIC_COLS = {
 }
 
 # 会话内共享数据
-DATA_KEY = "data"
+DATA_KEY = "cleaning_data"  # 与 data_overview 的 "data" 隔离，避免跨页串扰
 RULE_KEY = "current_rule"
+SOURCE_KEY = "cleaning_source"  # 记录当前数据源，切换源时重新加载
 
 
 def _detect_mask(df: pd.DataFrame, col: str, method: str, **kw) -> pd.Series:
@@ -44,6 +45,7 @@ def _detect_mask(df: pd.DataFrame, col: str, method: str, **kw) -> pd.Series:
 def _load_source() -> tuple[pd.DataFrame | None, str | None]:
     """返回 (工作 df, 目标数值列名)。df 至少含一列数值列。"""
     source = st.segmented_control("数据源", ["数据库传感器数据", "上传文件"], default="数据库传感器数据")
+    st.session_state["src_type"] = source
 
     if source == "上传文件":
         uploaded = st.file_uploader("上传文件", type=["csv", "xlsx", "xls", "json"])
@@ -59,12 +61,16 @@ def _load_source() -> tuple[pd.DataFrame | None, str | None]:
         if not numeric:
             st.error("文件中无数值列，无法做异常检测/清洗。")
             return None, None
-        col = st.selectbox("选择数值列", numeric, key="up_col")
+        col = st.selectbox("选择数值列", numeric, key="cleaning_up_col")
+        st.session_state["src_metric"] = "upload"
+        st.session_state["src_col"] = col
         return df, col
 
-    metric = st.selectbox("选择指标", list(METRIC_COLS.keys()))
-    sub = st.selectbox("选择字段", METRIC_COLS[metric], format_func=lambda x: x[0])
+    metric = st.selectbox("选择指标", list(METRIC_COLS.keys()), key="cleaning_metric")
+    sub = st.selectbox("选择字段", METRIC_COLS[metric], format_func=lambda x: x[0], key="cleaning_field")
     _, col = sub
+    st.session_state["src_metric"] = metric
+    st.session_state["src_col"] = col
     since = datetime.now() - timedelta(days=90)
     df = cache.cached_sensor_df(metric, col, since.isoformat(), limit=5000)
     if df.empty:
@@ -75,11 +81,21 @@ def _load_source() -> tuple[pd.DataFrame | None, str | None]:
 
 
 def _ensure_data() -> tuple[pd.DataFrame | None, str | None]:
-    """加载数据源并写入 session_state。返回 (df, 目标列)。"""
+    """加载数据源并写入 session_state。返回 (df, 目标列)。
+
+    修复：仅在会话无数据或数据源标识变化时才重新加载，避免每次 rerun
+    用原始数据覆盖用户已完成的清洗/异常清除结果。
+    """
     df, col = _load_source()
     if df is None or col is None:
         return None, None
+    # 源标识：来源类型 + 指标 + 列 + 行数（切换源/指标/字段时重新加载）
+    source_tag = (st.session_state.get("src_type"), st.session_state.get("src_metric"),
+                  st.session_state.get("src_col"), len(df))
+    if DATA_KEY in st.session_state and st.session_state.get(SOURCE_KEY) == source_tag:
+        return st.session_state[DATA_KEY], col
     st.session_state[DATA_KEY] = df
+    st.session_state[SOURCE_KEY] = source_tag
     st.success(f"已加载 **{len(df)}** 行，目标列：`{col}`（缺失 {int(df[col].isnull().sum())} 个）")
     return df, col
 

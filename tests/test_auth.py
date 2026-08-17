@@ -69,3 +69,18 @@ def test_limiter_defaults_match_legacy():
     # 对齐旧库：10 次失败 / 30 秒窗口
     assert auth.limiter.max_attempts == 10
     assert auth.limiter.window.total_seconds() == 30
+
+
+def test_validate_username():
+    ok, err = auth.validate_username("alice_01")
+    assert ok and err == ""
+    ok, _ = auth.validate_username("张三")
+    assert ok
+    ok, _ = auth.validate_username("a")  # 过短
+    assert not ok
+    ok, _ = auth.validate_username("x" * 51)  # 过长
+    assert not ok
+    ok, _ = auth.validate_username("**管理员** [x](url)")  # 注入字符
+    assert not ok
+    ok, _ = auth.validate_username("")  # 空
+    assert not ok

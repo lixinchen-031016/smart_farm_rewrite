@@ -4,9 +4,15 @@
 一律外置，禁止硬编码。默认值仅用于本地开发（SQLite）。
 """
 
+import logging
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+# 生产必须替换的弱默认值（安全修复：检测并告警，防止漏配密钥）
+_INSECURE_DEFAULT_SECRET = "change-me-in-production-use-a-32-plus-char-random-string"
 
 
 class Settings(BaseSettings):
@@ -28,7 +34,7 @@ class Settings(BaseSettings):
     db_echo: bool = False
 
     # 认证
-    secret_key: str = "change-me-in-production-use-a-32-plus-char-random-string"
+    secret_key: str = _INSECURE_DEFAULT_SECRET
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
     bcrypt_rounds: int = 12
@@ -37,4 +43,9 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """返回缓存的全局配置实例。"""
-    return Settings()
+    settings = Settings()
+    if settings.secret_key == _INSECURE_DEFAULT_SECRET and not settings.debug:
+        logger.warning(
+            "SECRET_KEY 仍为默认弱值且未处于 DEBUG 模式——生产环境请务必在 .env 中配置强随机密钥。"
+        )
+    return settings

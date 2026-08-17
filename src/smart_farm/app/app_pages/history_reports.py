@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from smart_farm.app.guards import require_admin
 from smart_farm.services.prediction_archive import _default_exports_dir
 
 # 展示用的文件后缀（md 预览 + csv 下载）
@@ -51,6 +52,8 @@ def _render_preview(report: dict) -> str:
 
 
 st.title("历史报告")
+if not require_admin():  # 修复：管理页二次守卫（纵深防御）
+    st.stop()
 
 base_dir = _default_exports_dir()
 if not base_dir.exists():

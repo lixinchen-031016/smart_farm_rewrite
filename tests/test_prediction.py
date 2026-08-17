@@ -149,3 +149,42 @@ def test_score_prediction():
     assert "RMSE" in result["rmse_note"]
     none_result = ps.score_prediction(None, [])
     assert none_result["score"] == 0
+
+
+# ----------------------------- 优化修复回归 -----------------------------
+
+
+def test_prepare_series_keeps_minute_sampling():
+    """修复：非整点（分钟级）采样按 3H 桶聚合保留，而非被网格丢弃。"""
+    ts = pd.date_range("2026-01-01 09:10", periods=48 * 20, freq="10min")  # 跨 8 天
+    vals = [10 + i for i in range(len(ts))]
+    df = ps.prepare_series(vals, ts)
+    # 8 天 × 8 桶 ≈ 64 桶，绝大部分有值（修复前分钟级数据几乎全被丢弃）
+    assert len(df) >= 50
+
+
+def test_naive_empty_input_no_crash():
+    """修复：空输入返回空结果而非 IndexError。"""
+    res = ps.naive_forecast([], [])
+    assert res.forecast.empty
+    assert "无有效历史数据" in res.explanation
+
+
+def test_score_prediction_negative_mean():
+    """修复：负均值序列不再恒得高分。"""
+    values = [-5.0 - i * 0.1 for i in range(50)]
+    result = ps.score_prediction(10.0, values)
+    assert result["score"] < 6  # 修复前恒 6 分
+
+
+def test_multivariate_dropna_insufficient():
+    """修复：dropna 后样本不足抛明确异常而非 sklearn 内部错误。"""
+    pytest.importorskip("sklearn")
+    ts = pd.date_range("2026-01-01", periods=30, freq="3h").to_list()
+    try:
+        ps.multivariate_forecast(
+            [20.0] * 30, [60.0] * 30, [float("nan")] * 30, ts, prediction_days=1
+        )
+        assert False, "应抛出 ValueError"
+    except ValueError as e:
+        assert "有效样本不足" in str(e)

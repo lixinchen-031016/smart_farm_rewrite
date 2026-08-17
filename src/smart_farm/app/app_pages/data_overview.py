@@ -124,6 +124,6 @@ with tab2:
         st.dataframe(data.head(), width="stretch")
 
         st.subheader("数据导出")
-        fmt = st.radio("导出格式", ["CSV", "Excel", "JSON"])
-        if st.button("导出", type="primary", icon=":material/file_upload:"):
-            _render_download(data, fmt)
+        fmt = st.radio("导出格式", ["CSV", "Excel", "JSON"], key="upload_fmt")  # 修复：补 key 防跨页串扰
+        # 修复：直接渲染下载按钮（旧版嵌套在"导出"按钮内，交互后消失）
+        _render_download(data, fmt)

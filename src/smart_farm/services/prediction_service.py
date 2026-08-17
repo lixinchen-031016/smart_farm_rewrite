@@ -33,19 +33,34 @@ def naive_forecast(
     prediction_days: int = 7,
     method: str = "last",
 ) -> ForecastResult:
-    """朴素预测：method='last' 用末值，'mean' 用均值，'drift' 用末段斜率外推。"""
-    hist = _to_tsdf(values, timestamps)
+    """朴素预测：method='last' 用末值，'mean' 用均值，'drift' 用末段斜率外推。
+
+    修复：空输入时返回空结果而非 IndexError 崩溃（旧版 `values[-1]` 越界）。
+    """
+    clean_values = [v for v in values if v is not None]
+    clean_ts = [t for t in timestamps if t is not None]
+    if not clean_values:
+        return ForecastResult(
+            history=_to_tsdf([], []),
+            forecast=pd.DataFrame(
+                columns=["ds", "yhat", "yhat_lower", "yhat_upper"]
+            ),
+            method=f"naive({method})",
+            explanation="无有效历史数据，无法预测。",
+        )
+
+    hist = _to_tsdf(clean_values, clean_ts)
     last_ts = hist["ds"].max()
     future_ts = [last_ts + pd.Timedelta(days=i + 1) for i in range(prediction_days)]
 
     if method == "mean":
-        base = float(np.mean(values))
+        base = float(np.mean(clean_values))
     elif method == "drift":
-        x = np.arange(len(values))
-        slope = float(np.polyfit(x, np.asarray(values, dtype=float), 1)[0]) if len(values) > 1 else 0.0
-        base = float(values[-1])
+        x = np.arange(len(clean_values))
+        slope = float(np.polyfit(x, np.asarray(clean_values, dtype=float), 1)[0]) if len(clean_values) > 1 else 0.0
+        base = float(clean_values[-1])
     else:  # last
-        base = float(values[-1])
+        base = float(clean_values[-1])
         slope = 0.0
 
     if method == "drift":
@@ -53,7 +68,7 @@ def naive_forecast(
     else:
         yhat = [base] * prediction_days
 
-    band = float(np.std(values)) if len(values) > 1 else 0.0
+    band = float(np.std(clean_values)) if len(clean_values) > 1 else 0.0
     fc = pd.DataFrame(
         {
             "ds": future_ts,
@@ -71,9 +86,16 @@ def naive_forecast(
 
 
 def prophet_forecast(
-    values: Sequence[float], timestamps: Sequence[pd.Timestamp], prediction_days: int = 7
+    values: Sequence[float],
+    timestamps: Sequence[pd.Timestamp],
+    prediction_days: int = 7,
+    changepoint_prior_scale: float = 0.05,
+    seasonality_prior_scale: float = 10.0,
 ) -> ForecastResult:
-    """Prophet 预测（懒加载，未安装 prophet 时抛出明确异常）。"""
+    """Prophet 预测（懒加载，未安装 prophet 时抛出明确异常）。
+
+    修复：支持 changepoint/seasonality 参数（UI 滑块此前无效）。
+    """
     try:
         from prophet import Prophet  # type: ignore
     except ImportError as exc:  # pragma: no cover
@@ -82,7 +104,14 @@ def prophet_forecast(
         ) from exc
 
     hist = _to_tsdf(values, timestamps)
-    m = Prophet()
+    m = Prophet(
+        yearly_seasonality=False,
+        weekly_seasonality=True,
+        daily_seasonality=True,
+        seasonality_mode="additive",
+        changepoint_prior_scale=changepoint_prior_scale,
+        seasonality_prior_scale=seasonality_prior_scale,
+    )
     m.fit(hist)
     future = m.make_future_dataframe(periods=prediction_days, freq="D")
     pred = m.predict(future)
@@ -152,14 +181,21 @@ POINTS_PER_DAY = 8
 
 
 def prepare_series(values: Sequence[float], timestamps: Sequence[pd.Timestamp]) -> pd.DataFrame:
-    """数据预处理（对齐旧版 perform_prediction）：3H 重采样 + 线性插值 + 99 分位修剪。
+    """数据预处理：3H 重采样聚合 + 线性插值 + 99 分位修剪。
+
+    修复：旧版用 `asfreq("3h")` 把非整点时间戳全部丢弃（分钟级采样只剩 2/20 条），
+    导致混合模型静默回退 naive。改为 `resample("3h").mean()` 按 3H 桶聚合，
+    保留全部数据信息。
 
     Returns:
-        DataFrame(index=ds, columns=[y])，时间索引为 3H 对齐。
+        DataFrame(index=ds, columns=[y])，时间索引为 3H 对齐（00/03/06/09... 点）。
     """
     df = pd.DataFrame({"ds": pd.to_datetime(list(timestamps)), "y": list(values)})
-    df = df.set_index("ds").sort_index()
-    df = df.asfreq(SAMPLING_FREQ)  # 对齐到 3H 网格，产生 NaN
+    df = df.dropna(subset=["y"]).set_index("ds").sort_index()
+    if df.empty:
+        return df
+    # 3H 桶聚合（每个桶取均值；空桶为 NaN 待插值）
+    df = df.resample(SAMPLING_FREQ).mean()
     df["y"] = df["y"].interpolate(limit_direction="both")  # 线性插值补缺
     if df["y"].notna().sum() > 0:
         cap = df["y"].quantile(0.99)  # >99 分位替换为中位数（异常值处理）
@@ -176,11 +212,14 @@ def hybrid_forecast(
     manual_prophet_weight: float = 0.6,
     manual_sarima_weight: float = 0.4,
     use_grid_search: bool = True,
+    changepoint_prior_scale: float = 0.05,
+    seasonality_prior_scale: float = 10.0,
 ) -> ForecastResult:
     """Prophet + SARIMA 权重融合预测（对齐旧版 sarima_validation_prediction）。
 
     策略：手动权重之和为 1.0 时用指定权重；否则按 1/(1+RMSE) 归一化自动分配。
     SARIMA 或 Prophet 不可用时回退到可用的单模型 / naive。
+    修复：透传 changepoint/seasonality 参数（UI 滑块此前无效）。
     """
     prepared = prepare_series(values, timestamps)
     if len(prepared) < 2:
@@ -212,8 +251,14 @@ def hybrid_forecast(
         fit = model.fit(disp=False, maxiter=200)
         sarima_pred = pd.Series(fit.forecast(steps=total_points).values, index=forecast_dates)
         fitted = fit.fittedvalues
-        sarima_rmse = float(np.sqrt(np.mean((hist - fitted) ** 2)))
-        sarima_ok = True
+        # 修复：差分模型 fittedvalues 头部可能含 NaN，去 NaN 后计算 RMSE
+        mask = fitted.notna() & hist.notna()
+        if mask.sum() > 0:
+            sarima_rmse = float(np.sqrt(np.mean((hist[mask] - fitted[mask]) ** 2)))
+        else:
+            sarima_rmse = float("inf")
+        if np.isfinite(sarima_rmse) and not np.isnan(sarima_pred.values).all():
+            sarima_ok = True
     except Exception:  # noqa: BLE001 任一模型失败不影响整体
         sarima_ok = False
 
@@ -223,7 +268,9 @@ def hybrid_forecast(
 
         fit_df = prepared.reset_index().rename(columns={"index": "ds", "y": "y"})
         m = Prophet(yearly_seasonality=False, weekly_seasonality=True,
-                    daily_seasonality=True, seasonality_mode="additive")
+                    daily_seasonality=True, seasonality_mode="additive",
+                    changepoint_prior_scale=changepoint_prior_scale,
+                    seasonality_prior_scale=seasonality_prior_scale)
         m.fit(fit_df)
         future = pd.DataFrame({"ds": forecast_dates})
         pred = m.predict(future)
@@ -231,8 +278,13 @@ def hybrid_forecast(
         prophet_pred.index = forecast_dates
         # Prophet 历史拟合 RMSE
         fitted_hist = m.predict(fit_df[["ds"]])["yhat"].reset_index(drop=True)
-        prophet_rmse = float(np.sqrt(np.mean((prepared["y"].values - fitted_hist.values) ** 2)))
-        prophet_ok = True
+        mask = fitted_hist.notna() & prepared["y"].notna()
+        if mask.sum() > 0:
+            prophet_rmse = float(np.sqrt(np.mean((prepared["y"].values[mask] - fitted_hist.values[mask]) ** 2)))
+        else:
+            prophet_rmse = float("inf")
+        if np.isfinite(prophet_rmse) and not np.isnan(prophet_pred.values).all():
+            prophet_ok = True
     except Exception:  # noqa: BLE001
         prophet_ok = False
 
@@ -241,10 +293,14 @@ def hybrid_forecast(
         if manual_prophet_weight + manual_sarima_weight == 1.0:
             w_p, w_s = manual_prophet_weight, manual_sarima_weight
         else:
-            wp_raw = 1 / (1 + prophet_rmse)
-            ws_raw = 1 / (1 + sarima_rmse)
-            w_p = wp_raw / (wp_raw + ws_raw)
-            w_s = ws_raw / (wp_raw + ws_raw)
+            # 修复：任一 RMSE 非有限时用另一模型权重（避免 1/(1+NaN) 产生 NaN 融合结果）
+            wp_raw = 1 / (1 + prophet_rmse) if np.isfinite(prophet_rmse) else 0.0
+            ws_raw = 1 / (1 + sarima_rmse) if np.isfinite(sarima_rmse) else 0.0
+            total = wp_raw + ws_raw
+            if total <= 0:
+                w_p, w_s = manual_prophet_weight, manual_sarima_weight
+            else:
+                w_p, w_s = wp_raw / total, ws_raw / total
         combined = w_p * prophet_pred + w_s * sarima_pred
         method_name = "hybrid(prophet+sarima)"
         explanation = (
@@ -325,6 +381,12 @@ def multivariate_forecast(
     if use_interaction:
         work["temp_humid_interaction"] = work["temperature"] * work["humidity"]
     work = work.dropna()
+
+    # 修复：dropna 后样本数可能骤减（如 light 全 NaN），需在拟合前重新校验
+    if len(work) < 2:
+        raise ValueError(
+            "多变量数据在构造特征后有效样本不足（存在全空列或过多样本被剔除）。"
+        )
 
     feature_cols = [c for c in ("temperature", "humidity", "light", "temp_lag1", "humid_lag1", "temp_humid_interaction")
                     if c in work.columns]
@@ -408,11 +470,11 @@ def score_prediction(rmse: Optional[float], values: Sequence[float]) -> dict:
     series = pd.Series(list(values), dtype=float).dropna()
     std = float(series.std()) if len(series) > 1 else 0.0
     mean = float(series.mean()) if len(series) else 0.0
-    volatility = std / mean if abs(mean) > 1e-9 else 0.0
+    volatility = std / abs(mean) if abs(mean) > 1e-9 else 0.0
 
     score = 0
-    # RMSE（相对均值）占 2 分
-    rmse_ratio = rmse / mean if abs(mean) > 1e-9 else 1.0
+    # 修复：RMSE 比值用均值绝对值，避免负均值数据（如冬季负温）恒得高分
+    rmse_ratio = rmse / abs(mean) if abs(mean) > 1e-9 else 1.0
     if rmse_ratio < 0.05:
         score += 2
     elif rmse_ratio < 0.15:

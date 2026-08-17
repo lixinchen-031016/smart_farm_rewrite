@@ -25,6 +25,7 @@ def _create_engine():
         pool_size=_settings.db_pool_size,
         max_overflow=_settings.db_max_overflow,
         echo=_settings.db_echo,
+        pool_pre_ping=True,  # 修复：空闲连接被 MySQL 回收后自动重连，避免 Lost connection
         future=True,
     )
 

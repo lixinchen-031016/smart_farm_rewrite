@@ -35,8 +35,22 @@ def main() -> None:
     elif action == "downgrade":
         command.downgrade(cfg, sys.argv[2] if len(sys.argv) > 2 else "base")
     elif action == "revision":
-        # 透传剩余参数，例如 -m "说明"
-        command.revision(cfg, *sys.argv[2:], autogenerate=True)
+        # 透传剩余参数（如 -m "说明"），autogenerate 由脚本固定开启
+        message = None
+        extra: list[str] = []
+        args = sys.argv[2:]
+        i = 0
+        while i < len(args):
+            if args[i] == "-m" and i + 1 < len(args):
+                message = args[i + 1]
+                i += 2
+            elif args[i].startswith("--message") and "=" in args[i]:
+                message = args[i].split("=", 1)[1]
+                i += 1
+            else:
+                extra.append(args[i])
+                i += 1
+        command.revision(cfg, message=message, autogenerate=True, *extra)
     else:
         print(f"未知命令: {action}\n{__doc__}")
         raise SystemExit(1)

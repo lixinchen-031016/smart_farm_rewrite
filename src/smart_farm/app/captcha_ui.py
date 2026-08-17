@@ -44,7 +44,10 @@ def validate_captcha_input(
     session_key: str = "login",
     field_name: str = "验证码",
 ) -> bool:
-    """校验验证码输入；失败给出提示并刷新验证码。"""
+    """校验验证码输入；失败给出提示并刷新验证码。
+
+    修复：校验成功后立即销毁会话验证码（防重放——同一验证码不可被再次使用）。
+    """
     expected = st.session_state.get(f"captcha_{session_key}", "")
     if not user_input:
         st.error(f"请输入{field_name}。")
@@ -53,4 +56,7 @@ def validate_captcha_input(
         st.error(f"{field_name}错误，请重新输入。")
         refresh_captcha(session_key)
         return False
+    # 成功后销毁，防重放
+    st.session_state.pop(f"captcha_{session_key}", None)
+    st.session_state.pop(f"captcha_{session_key}_image", None)
     return True

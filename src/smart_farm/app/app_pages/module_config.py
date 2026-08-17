@@ -1,37 +1,76 @@
-"""模块配置页面（管理员专属）。声明式模块注册表，统一入口、消除矛盾。
+"""模块配置页面（管理员专属）。
 
-说明：本版以「代码内声明式注册表」呈现各功能模块与启用状态，替代旧版
-"默认禁用却可 URL 直访"的矛盾入口。后续如需 DB 开关，可在此注册表基础上
-增加 `module_enabled` 表并由 `main.py` 动态过滤菜单。
+对齐旧库 module_config_ui：
+- 按分类 tabs 展示各模块 expander（描述/依赖/权限）
+- 「启用模块」toggle 实时写 JSON（含依赖检查：禁用被依赖模块被拒绝）
+- 「仅管理员可用」toggle
+- 状态概览 metric + 保存/恢复默认
+启停经 `module_manager` 持久化到 module_config.json，main.py 按此真过滤导航。
 """
 
 import pandas as pd
 import streamlit as st
 
 from smart_farm.app.guards import require_admin
-
-# 声明式模块注册表（单一事实来源）
-MODULE_REGISTRY = [
-    ("综合监控仪表板", "dashboard", "启用", "实时指标卡 + 趋势"),
-    ("数据概览", "data_overview", "启用", "DB 浏览 + 上传/导出"),
-    ("数据清洗与异常", "data_cleaning", "启用", "异常检测 + 清洗"),
-    ("数据分析", "data_analysis", "启用", "描述统计/相关性/聚合"),
-    ("高级分析", "advanced_analysis", "启用", "分组聚合 + 智能洞察"),
-    ("可视化", "visualization", "启用", "折线/直方图/箱线/散点"),
-    ("本地数据预测", "prediction", "启用", "Prophet/SARIMA/naive"),
-    ("自动化决策", "decision", "启用", "规则引擎"),
-    ("用户管理", "user_management", "管理员", "用户与角色"),
-    ("操作日志", "log_viewer", "管理员", "审计日志"),
-    ("系统监控", "system_monitoring", "管理员", "数据量与质量"),
-    ("模块配置", "module_config", "管理员", "本页"),
-    ("备份与恢复", "backup_restore", "管理员", "数据导出/导入"),
-]
+from smart_farm.services import module_manager as mm
 
 st.title("模块配置")
 if not require_admin():
     st.stop()
 
-st.caption("声明式模块注册表：统一入口与启用状态，避免「禁用却可直访」的矛盾。")
-df = pd.DataFrame(MODULE_REGISTRY, columns=["模块", "路由键", "启用状态", "说明"])
+manager = mm.get_module_manager()
+
+# 分类 tabs
+categories = manager.get_categories()
+tabs = st.tabs(categories)
+for tab, category in zip(tabs, categories):
+    with tab:
+        modules = manager.get_modules(category=category)
+        for module in modules:
+            with st.expander(f"{module.display_name}（{'启用' if module.enabled else '已禁用'}）"):
+                st.caption(module.description)
+                st.caption(f"依赖：{', '.join(module.dependencies) if module.dependencies else '无'}")
+                enabled = st.toggle("启用模块", value=module.enabled, key=f"toggle_{module.name}")
+                if enabled != module.enabled:
+                    if enabled:
+                        manager.enable_module(module.name)
+                        st.rerun()
+                    elif not manager.disable_module(module.name):
+                        st.error(f"无法禁用 {module.display_name}：仍有启用模块依赖它。")
+                        st.rerun()
+                    else:
+                        st.rerun()
+                admin_only = st.toggle("仅管理员可用", value=module.admin_only, key=f"admin_only_{module.name}")
+                if admin_only != module.admin_only:
+                    manager.set_admin_only(module.name, admin_only)
+                    st.rerun()
+
+# 状态概览
+st.subheader("状态概览")
+all_modules = manager.get_modules()
+enabled_count = sum(1 for m in all_modules if m.enabled)
+admin_count = sum(1 for m in all_modules if m.admin_only)
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("总模块", len(all_modules))
+c2.metric("已启用", enabled_count)
+c3.metric("已禁用", len(all_modules) - enabled_count)
+c4.metric("管理员专用", admin_count)
+
+df = pd.DataFrame([{
+    "模块": m.display_name,
+    "路由键": m.name,
+    "分类": m.category,
+    "启用状态": "启用" if m.enabled else "已禁用",
+    "权限": "管理员" if m.admin_only else "普通",
+} for m in all_modules])
 st.dataframe(df, width="stretch")
-st.info("所有页面均经 `main.py` 的 `st.navigation` 统一路由，无独立可直访 URL 入口。")
+
+c1, c2 = st.columns(2)
+with c1:
+    if st.button("保存配置", type="primary", icon=":material/save:"):
+        manager.save_config()
+        st.success("配置已保存。")
+with c2:
+    if st.button("恢复默认配置", icon=":material/restore:"):
+        manager.restore_defaults()
+        st.rerun()

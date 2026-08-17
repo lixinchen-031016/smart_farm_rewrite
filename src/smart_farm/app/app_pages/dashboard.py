@@ -37,30 +37,42 @@ METRIC_DB = {
 }
 CROP_STAGES = ["growth", "flowering", "fruiting"]
 
-# 快捷操作按钮（对齐旧库：管理员 8 个 / 普通用户 6 个）
+# 快捷操作按钮（路由名须与 app_pages/ 文件名一致，修复旧版点击无动作）
 ADMIN_ACTIONS = [
     ("data_analysis", "数据分析", ":material/analytics:"),
-    ("data_prediction", "模型预测", ":material/timeline:"),
+    ("prediction", "模型预测", ":material/timeline:"),
     ("system_monitoring", "系统监控", ":material/monitor_heart:"),
     ("user_management", "用户管理", ":material/group:"),
-    ("data_backup", "数据备份", ":material/save:"),
-    ("data_restore", "数据恢复", ":material/restore:"),
+    ("backup_restore", "备份恢复", ":material/save:"),
     ("module_config", "模块配置", ":material/tune:"),
 ]
 USER_ACTIONS = [
     ("data_analysis", "数据分析", ":material/analytics:"),
-    ("data_prediction", "模型预测", ":material/timeline:"),
+    ("prediction", "模型预测", ":material/timeline:"),
     ("data_cleaning", "数据清洗", ":material/cleaning_services:"),
-    ("data_visualization", "可视化", ":material/bar_chart:"),
+    ("visualization", "可视化", ":material/bar_chart:"),
 ]
 
 
 def _preferences() -> dict:
-    """读取/初始化用户仪表板偏好（session_state 持久化，对齐旧库）。"""
+    """读取/初始化用户仪表板偏好（session_state 持久化，对齐旧库）。
+
+    修复：用默认值补全缺失键（兼容旧版本偏好存档，避免 KeyError 页面崩溃）。
+    """
     username = st.session_state.get("username", "guest")
     key = f"dashboard_pref_{username}"
     if key not in st.session_state:
         st.session_state[key] = ds.default_preferences(username)
+    else:
+        defaults = ds.default_preferences(username)
+        stored = st.session_state[key]
+        # 深度补全缺失的阈值键
+        merged_th = dict(defaults["custom_thresholds"])
+        merged_th.update(stored.get("custom_thresholds", {}))
+        stored["custom_thresholds"] = merged_th
+        for k, v in defaults.items():
+            stored.setdefault(k, v)
+        st.session_state[key] = stored
     return st.session_state[key]
 
 
@@ -69,8 +81,9 @@ def _get_prefs_ref() -> dict:
     return st.session_state[f"dashboard_pref_{username}"]
 
 
-def _load_latest() -> dict[str, float | None]:
-    """各指标最新值（走轻量查询，对齐旧库 get_latest_sensor_data）。"""
+@st.cache_data(ttl=30, max_entries=8)
+def _load_latest_cached() -> dict[str, float | None]:
+    """各指标最新值（缓存 30 秒——修复每 rerun 5 次独立查库的性能问题）。"""
     result: dict[str, float | None] = {}
     with get_session() as s:
         for metric, (_, col, _) in METRICS.items():
@@ -78,6 +91,10 @@ def _load_latest() -> dict[str, float | None]:
             row = repo.get_latest_sensor_reading(s, db_metric)
             result[metric] = round(getattr(row, col), 2) if row else None
     return result
+
+
+def _load_latest() -> dict[str, float | None]:
+    return _load_latest_cached()
 
 
 def _load_trend(metric: str, hours: int) -> pd.DataFrame:
@@ -144,12 +161,16 @@ def _render_threshold_config(prefs: dict) -> None:
 
 
 def _render_quick_actions() -> None:
-    """快捷操作按钮（按角色过滤，对齐旧库 render_*_controls）。"""
+    """快捷操作按钮（按角色过滤，点击跳转对应页面——修复旧版点击无动作）。"""
     role = st.session_state.get("role", "user")
     actions = ADMIN_ACTIONS if role == "admin" else USER_ACTIONS
     with st.container(horizontal=True):
         for page, label, icon in actions:
-            st.button(label, icon=icon, key=f"quick_{page}")
+            if st.button(label, icon=icon, key=f"quick_{page}"):
+                try:
+                    st.switch_page(f"app_pages/{page}.py")
+                except Exception:  # noqa: BLE001 页面不可用时给出提示而非静默
+                    st.info(f"页面「{label}」当前不可用（可能被模块配置禁用）。")
 
 
 st.title("综合监控仪表板")

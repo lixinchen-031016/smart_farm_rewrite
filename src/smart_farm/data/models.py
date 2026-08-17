@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -34,6 +35,10 @@ class Greenhouse(Base):
 
 class AirTemperatureHumidity(Base):
     __tablename__ = "air_temperature_humidity"
+    __table_args__ = (
+        # 修复：复合索引覆盖最热查询 WHERE greenhouse_id=? AND timestamp>=? ORDER BY timestamp
+        Index("ix_ath_gh_ts", "greenhouse_id", "timestamp"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     greenhouse_id = Column(Integer, ForeignKey("greenhouse.id"), nullable=True, index=True)
     temperature = Column(Float, nullable=False)
@@ -43,6 +48,9 @@ class AirTemperatureHumidity(Base):
 
 class SoilMoisture(Base):
     __tablename__ = "soil_moisture"
+    __table_args__ = (
+        Index("ix_sm_gh_ts", "greenhouse_id", "timestamp"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     greenhouse_id = Column(Integer, ForeignKey("greenhouse.id"), nullable=True, index=True)
     value = Column(Float, nullable=False)
@@ -51,6 +59,9 @@ class SoilMoisture(Base):
 
 class SoilNutrient(Base):
     __tablename__ = "soil_nutrient"
+    __table_args__ = (
+        Index("ix_sn_gh_ts", "greenhouse_id", "timestamp"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     greenhouse_id = Column(Integer, ForeignKey("greenhouse.id"), nullable=True, index=True)
     value = Column(Float, nullable=False)
@@ -59,6 +70,9 @@ class SoilNutrient(Base):
 
 class LightIntensity(Base):
     __tablename__ = "light_intensity"
+    __table_args__ = (
+        Index("ix_li_gh_ts", "greenhouse_id", "timestamp"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     greenhouse_id = Column(Integer, ForeignKey("greenhouse.id"), nullable=True, index=True)
     value = Column(Float, nullable=False)

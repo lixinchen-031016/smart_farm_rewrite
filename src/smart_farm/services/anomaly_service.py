@@ -94,8 +94,12 @@ def detect_outliers_isolation_forest(
         random_state=random_state,
     )
     preds = model.fit_predict(scaled)
-    outlier_idx = set(clean.index[preds == -1])
-    return pd.Series(df.index.isin(outlier_idx), index=df.index)
+    # 修复：按位置回填掩码（isin 在重复索引时会把同标签所有行误标为异常）
+    outlier_positions = [clean.index.get_loc(idx) for idx in clean.index[preds == -1]]
+    mask = pd.Series(False, index=df.index)
+    if outlier_positions:
+        mask.iloc[outlier_positions] = True
+    return mask
 
 
 def detect_anomalies(

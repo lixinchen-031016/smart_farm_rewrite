@@ -84,6 +84,19 @@ class DecisionEngine:
             if metric not in latest:
                 continue
             value = latest[metric]
+            # 修复：NaN/None 不参与判定（旧版 NaN<1000 为 False → 误报"光照正常"）
+            if value is None or (isinstance(value, float) and value != value):
+                recs.append(
+                    Recommendation(
+                        type=metric,
+                        message="数据缺失",
+                        reason=f"{metric} 当前数据缺失，无法评估环境条件",
+                        priority="low",
+                        current_value=None,
+                        threshold=None,
+                    )
+                )
+                continue
             low = rule.get("low_threshold")
             high = rule.get("high_threshold")
             trend = trends.get(metric, 0.0)

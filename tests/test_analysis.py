@@ -1,7 +1,10 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from smart_farm.services import analysis_service as az
+from smart_farm.services import docx_manual as az_docx
+from smart_farm.services import instruction_data as az_ins
 
 
 def _df():
@@ -120,3 +123,25 @@ def test_enhanced_data_analysis_entry():
     assert desc is not None and not desc.empty
     assert corr is not None
     assert exp_lines and corr_lines
+
+
+# ----------------------------- 使用说明 / docx -----------------------------
+
+
+def test_instruction_data_structure():
+    data = az_ins.get_full_instruction()
+    assert "核心功能" in data and "系统管理" in data
+    # 每个功能都有 desc/steps/notes 字段
+    for category in data.values():
+        for feature in category:
+            assert "desc" in feature and "steps" in feature
+
+
+def test_docx_generation(tmp_path):
+    pytest.importorskip("docx")
+    out = az_docx.generate_docx_manual(tmp_path / "manual.docx")
+    assert out.endswith(".docx")
+    from pathlib import Path
+
+    assert Path(out).exists()
+    assert Path(out).stat().st_size > 500

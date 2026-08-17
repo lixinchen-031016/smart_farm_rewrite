@@ -75,7 +75,7 @@ c3.metric("重复行", int(df.duplicated().sum()))
 chart_type, params, reason = vs.create_smart_chart_recommendation(df)
 st.caption(f"智能推荐：**{chart_type}** — {reason}")
 
-tab1, tab2 = st.tabs(["基础图表", "高级图表"])
+tab1, tab2 = st.tabs(["基础图表", "高级图表"], on_change="rerun")
 
 with tab1:
     chart = st.selectbox(
@@ -109,24 +109,27 @@ with tab1:
         st.error(str(e))
 
 with tab2:
-    st.subheader("双轴图")
-    x_axis = st.selectbox("X 轴", all_cols, key="dual_x")
-    y1 = st.selectbox("左 Y 轴", numeric_cols, key="dual_y1")
-    y2 = st.selectbox("右 Y 轴", numeric_cols, index=min(1, len(numeric_cols) - 1), key="dual_y2")
-    if st.button("生成双轴图", icon=":material/bar_chart:"):
-        if y1 == y2:
-            st.error("左右 Y 轴需选择不同列。")
-        else:
-            fig = vs.create_dual_axis_chart(df, x_axis, y1, y2, y1_title=y1, y2_title=y2)
-            st.plotly_chart(fig, width="stretch")
-            r = df[[y1, y2]].dropna().corr().iloc[0, 1]
-            level = "强" if abs(r) >= 0.7 else "中等" if abs(r) >= 0.3 else "弱"
-            st.caption(f"{y1} 与 {y2} 相关系数 r={r:.3f}（{level}相关）")
-
-    st.subheader("多子图")
-    sub_cols = st.multiselect("选择变量（≥2 个）", numeric_cols, default=numeric_cols[:3])
-    if len(sub_cols) >= 2:
-        fig = vs.create_multi_subplot_chart(df, "timestamp" if "timestamp" in df.columns else all_cols[0], sub_cols)
-        st.plotly_chart(fig, width="stretch")
+    if not tab2.open:
+        st.caption("切换到本标签页使用高级图表。")
     else:
-        st.info("请至少选择两个变量生成多子图。")
+        st.subheader("双轴图")
+        x_axis = st.selectbox("X 轴", all_cols, key="dual_x")
+        y1 = st.selectbox("左 Y 轴", numeric_cols, key="dual_y1")
+        y2 = st.selectbox("右 Y 轴", numeric_cols, index=min(1, len(numeric_cols) - 1), key="dual_y2")
+        if st.button("生成双轴图", icon=":material/bar_chart:"):
+            if y1 == y2:
+                st.error("左右 Y 轴需选择不同列。")
+            else:
+                fig = vs.create_dual_axis_chart(df, x_axis, y1, y2, y1_title=y1, y2_title=y2)
+                st.plotly_chart(fig, width="stretch")
+                r = df[[y1, y2]].dropna().corr().iloc[0, 1]
+                level = "强" if abs(r) >= 0.7 else "中等" if abs(r) >= 0.3 else "弱"
+                st.caption(f"{y1} 与 {y2} 相关系数 r={r:.3f}（{level}相关）")
+
+        st.subheader("多子图")
+        sub_cols = st.multiselect("选择变量（≥2 个）", numeric_cols, default=numeric_cols[:3])
+        if len(sub_cols) >= 2:
+            fig = vs.create_multi_subplot_chart(df, "timestamp" if "timestamp" in df.columns else all_cols[0], sub_cols)
+            st.plotly_chart(fig, width="stretch")
+        else:
+            st.info("请至少选择两个变量生成多子图。")

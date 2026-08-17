@@ -1,5 +1,4 @@
 """dashboard_service 与 fetch_data_in_bulk 测试。"""
-
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -10,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from smart_farm.data import repositories as repo
 from smart_farm.data.models import Base
 from smart_farm.services import dashboard_service as ds
+from smart_farm.services import system_service as ss
 
 
 def _fill_sensor(session, metric, ts, value=None, **fields):
@@ -113,3 +113,43 @@ def test_fetch_data_in_bulk_missing_join_tables(session):
     df = repo.fetch_data_in_bulk(session)
     assert len(df) == 1
     assert df["soil_moisture"].iloc[0] is None or pd.isna(df["soil_moisture"].iloc[0])
+
+
+# ----------------------------- system_service -----------------------------
+
+
+def test_performance_recommendations_thresholds():
+    recs = ss.get_performance_recommendations(90, 50, 40)
+    assert any("CPU" in r for r in recs)
+    recs = ss.get_performance_recommendations(50, 90, 40)
+    assert any("内存" in r for r in recs)
+    recs = ss.get_performance_recommendations(50, 50, 90)
+    assert any("磁盘" in r for r in recs)
+    recs = ss.get_performance_recommendations(30, 30, 30)
+    assert any("良好" in r for r in recs)
+
+
+def test_system_metrics_collect():
+    # psutil 已装或未装都应安全返回
+    metrics = ss.collect_system_metrics()
+    if ss.is_psutil_available():
+        assert "cpu_percent" in metrics
+        assert "memory_percent" in metrics
+        assert "disk_percent" in metrics
+    else:
+        assert metrics == {}
+
+
+def test_fetch_data_in_bulk_offsets_match(session):
+    """修复：各传感器采样时刻有秒级偏差时仍能窗口匹配（旧版等值 JOIN 丢行）。"""
+    base = datetime(2026, 1, 1, 12, 0, 0)
+    _fill_sensor(session, "air_temperature_humidity", base, temperature=20.0, humidity=50.0)
+    # 其他表时间偏移 60 秒
+    _fill_sensor(session, "soil_moisture", base + timedelta(seconds=60), value=30.0)
+    _fill_sensor(session, "soil_nutrient", base + timedelta(seconds=60), value=40.0)
+    _fill_sensor(session, "light_intensity", base + timedelta(seconds=60), value=1000.0)
+    session.commit()
+    df = repo.fetch_data_in_bulk(session)
+    assert len(df) == 1
+    assert df["soil_moisture"].iloc[0] == 30.0
+    assert df["light_intensity"].iloc[0] == 1000.0

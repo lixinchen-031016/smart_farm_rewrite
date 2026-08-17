@@ -40,13 +40,18 @@ _AGG_FUNCS = {
 def group_and_aggregate(
     df: pd.DataFrame, group_column: str, agg_column: str, agg_function: str
 ) -> pd.DataFrame:
-    """按分组列对数值列做聚合，返回带中文列名的结果。"""
+    """按分组列对数值列做聚合，返回带中文列名的结果。
+
+    修复：非法聚合函数抛出 ValueError（旧版静默回退 mean，展示名与实际不符）。
+    """
     if group_column not in df.columns or agg_column not in df.columns:
         raise ValueError("分组列或聚合列不存在")
     if agg_column not in df.select_dtypes(include=[np.number]).columns:
         raise ValueError("聚合列必须是数值列")
+    if agg_function not in _AGG_FUNCS:
+        raise ValueError(f"不支持的聚合方式：{agg_function}（可选 {list(_AGG_FUNCS.keys())}）")
 
-    func = _AGG_FUNCS.get(agg_function, "mean")
+    func = _AGG_FUNCS[agg_function]
     grouped = df.groupby(group_column, dropna=False)[agg_column].agg(func).reset_index()
     grouped.columns = [group_column, f"{agg_column}_{agg_function}"]
     return grouped

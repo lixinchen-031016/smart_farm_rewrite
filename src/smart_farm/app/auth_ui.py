@@ -8,6 +8,7 @@ from smart_farm.app import captcha_ui
 from smart_farm.data import repositories as repo
 from smart_farm.data.database import get_session
 from smart_farm.services import auth_service as auth
+from smart_farm.services import captcha_service as cs
 
 
 def _do_login(username: str, password: str) -> bool:
@@ -81,9 +82,9 @@ def show_auth() -> None:
     if mode == "登录":
         captcha_ui.create_captcha_widget("login")
         with st.form("login_form"):
-            username = st.text_input("用户名")
-            password = st.text_input("密码", type="password")
-            captcha = st.text_input("验证码", max_chars=4)
+            username = st.text_input("用户名", key="login_username")
+            password = st.text_input("密码", type="password", key="login_password")
+            captcha = st.text_input("验证码", max_chars=cs.CAPTCHA_LENGTH, key="login_captcha")
             submitted = st.form_submit_button("登录", type="primary", icon=":material/login:")
         if submitted:
             if not captcha_ui.validate_captcha_input(captcha, "login"):
@@ -99,21 +100,23 @@ def show_auth() -> None:
             username = st.text_input("用户名", key="reg_username")
             password = st.text_input("密码", type="password", key="reg_password")
             confirm = st.text_input("确认密码", type="password", key="reg_confirm")
-            role_choice = st.segmented_control("身份", ["普通用户", "管理员"], default="普通用户")
-            captcha = st.text_input("验证码", max_chars=4)
+            role_choice = st.segmented_control("身份", ["普通用户", "管理员"], default="普通用户", key="reg_role")
+            captcha = st.text_input("验证码", max_chars=cs.CAPTCHA_LENGTH, key="reg_captcha")
             submitted = st.form_submit_button("注册", type="primary", icon=":material/person_add:")
         if submitted:
             if not captcha_ui.validate_captcha_input(captcha, "register"):
                 st.rerun()
-            elif not username:
-                st.error("用户名不能为空。")
-            elif password != confirm:
-                st.error("两次密码不一致。")
-            elif not auth.check_password_complexity(password):
-                st.warning("密码至少 8 位，且含大小写字母、数字、特殊字符。")
             else:
-                _register_user(username, password, role_choice)
-                captcha_ui.refresh_captcha("register")
+                valid_name, name_err = auth.validate_username(username)
+                if not valid_name:
+                    st.error(name_err)
+                elif password != confirm:
+                    st.error("两次密码不一致。")
+                elif not auth.check_password_complexity(password):
+                    st.warning("密码至少 8 位，且含大小写字母、数字、特殊字符。")
+                else:
+                    _register_user(username, password, role_choice)
+                    captcha_ui.refresh_captcha("register")
 
         # 强度条渲染在表单外（避免 form 提交时被吞），实时跟随密码输入
         typed = st.session_state.get("reg_password", "")

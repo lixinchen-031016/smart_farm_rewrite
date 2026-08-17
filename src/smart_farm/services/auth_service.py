@@ -48,6 +48,22 @@ def check_password_complexity(password: str) -> bool:
     return has_lower and has_upper and has_digit and has_special
 
 
+_USERNAME_RE = re.compile(r"^[\w\u4e00-\u9fa5-]{2,50}$")
+
+
+def validate_username(username: str) -> tuple[bool, str]:
+    """用户名合法性（安全修复：限制字符集与长度，防存储型注入/超长列）。
+
+    Returns:
+        (是否合法, 错误信息或空串)
+    """
+    if not username:
+        return False, "用户名不能为空"
+    if not _USERNAME_RE.match(username):
+        return False, "用户名限 2-50 位，仅含字母、数字、下划线、中文或连字符"
+    return True, ""
+
+
 _SPECIAL_CHARS = r'[!@#$%^&*(),.?"{}|<>\[\]\\/_+=~-]'
 
 

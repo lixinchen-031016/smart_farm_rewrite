@@ -77,12 +77,23 @@ def count_sensor_readings(
 
 
 def add_sensor_reading(session: Session, metric: str, value=None, greenhouse_id=None, timestamp=None, **fields):
-    """写入一条传感器数据。对 multi-column 模型（空气温湿度）用 fields 传额外列。"""
+    """写入一条传感器数据。对 multi-column 模型（空气温湿度）用 fields 传额外列。
+
+    修复：校验必填列，避免漏传 temperature/humidity 到 flush 才抛 IntegrityError。
+    """
     model = SENSOR_MODELS[metric]
     row = model(greenhouse_id=greenhouse_id, timestamp=timestamp, **fields)
     # 单值类传感器
     if value is not None and hasattr(row, "value"):
         row.value = value
+    # 必填列校验（除 id/greenhouse_id/timestamp 外的非空列）
+    required = {
+        c.name for c in model.__table__.columns
+        if not c.nullable and c.name not in ("id", "greenhouse_id", "timestamp") and c.default is None
+    }
+    missing = {c for c in required if getattr(row, c, None) is None}
+    if missing:
+        raise ValueError(f"{metric} 缺少必填字段：{', '.join(sorted(missing))}")
     session.add(row)
     session.flush()
     return row
@@ -94,9 +105,10 @@ def fetch_data_in_bulk(
     end: Optional[datetime] = None,
     limit: int = 100000,
 ) -> pd.DataFrame:
-    """按时间窗批量拉取全部传感器（多表 LEFT JOIN，对齐旧库输出列）。
+    """按时间窗批量拉取全部传感器（多表窗口匹配，对齐旧库输出列）。
 
-    以 `air_temperature_humidity` 为左表 JOIN 其余 3 张传感器表，
+    以 `air_temperature_humidity` 为左表，按「±2 分钟时间窗」关联其余 3 张表
+    （修复：等值 JOIN 在真实设备采样时刻有秒级偏差时整行丢失）。
     输出列：timestamp, temperature, humidity, soil_moisture, soil_nutrient, light_intensity。
     """
     from sqlalchemy import outerjoin, select
@@ -105,6 +117,13 @@ def fetch_data_in_bulk(
     sm = SoilMoisture
     sn = SoilNutrient
     li = LightIntensity
+
+    def _window(right_table):
+        """构造时间窗匹配条件：|at.ts - right.ts| <= 120 秒。"""
+        from sqlalchemy import func as sa_func
+
+        return sa_func.abs(sa_func.extract("epoch", at.timestamp) - sa_func.extract("epoch", right_table.timestamp)) <= 120
+
     stmt = select(
         at.timestamp.label("timestamp"),
         at.temperature.label("temperature"),
@@ -114,9 +133,9 @@ def fetch_data_in_bulk(
         li.value.label("light_intensity"),
     ).select_from(
         outerjoin(
-            outerjoin(outerjoin(at, sm, at.timestamp == sm.timestamp), sn, at.timestamp == sn.timestamp),
+            outerjoin(outerjoin(at, sm, _window(sm)), sn, _window(sn)),
             li,
-            at.timestamp == li.timestamp,
+            _window(li),
         )
     )
     if start is not None:
@@ -240,7 +259,7 @@ def add_log(
     log = OperationLog(
         log_time=datetime.now(),
         log_level=level,
-        username=username,
+        username=(username or "")[:50],  # 修复：对齐 OperationLog.username 列宽，防 MySQL Data too long
         action_type=action_type,
         action_details=details,
         details_json=details_json,
@@ -254,6 +273,9 @@ def get_logs(
     session: Session,
     username: Optional[str] = None,
     action_type: Optional[str] = None,
+    log_level: Optional[str] = None,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
     limit: int = 200,
     offset: int = 0,
 ) -> Sequence[OperationLog]:
@@ -262,5 +284,28 @@ def get_logs(
         stmt = stmt.where(OperationLog.username == username)
     if action_type:
         stmt = stmt.where(OperationLog.action_type == action_type)
+    if log_level:
+        stmt = stmt.where(OperationLog.log_level == log_level)
+    if start is not None:
+        stmt = stmt.where(OperationLog.log_time >= start)
+    if end is not None:
+        stmt = stmt.where(OperationLog.log_time <= end)
     stmt = stmt.order_by(OperationLog.log_time.desc()).limit(limit).offset(offset)
     return session.execute(stmt).scalars().all()
+
+
+def count_logs(
+    session: Session,
+    log_level: Optional[str] = None,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+) -> int:
+    """日志计数（聚合查询，避免全量拉取——修复 len(get_logs(limit=100000)) 性能问题）。"""
+    stmt = select(func.count()).select_from(OperationLog)
+    if log_level:
+        stmt = stmt.where(OperationLog.log_level == log_level)
+    if start is not None:
+        stmt = stmt.where(OperationLog.log_time >= start)
+    if end is not None:
+        stmt = stmt.where(OperationLog.log_time <= end)
+    return session.execute(stmt).scalar() or 0
