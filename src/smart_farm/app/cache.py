@@ -1,14 +1,12 @@
-"""Streamlit 缓存接入（热点查询 / 预测 / LLM Provider）。
+"""Streamlit 缓存接入（热点查询 / 预测）。
 
 遵循 `developing-with-streamlit` 技能要点：
 - `st.cache_data`：带 `ttl` + `max_entries`，防止缓存无限增长；用于传感器时序查询与预测结果。
-- `st.cache_resource`：共享昂贵资源（LLM Provider 客户端），整个会话只初始化一次。
 - 不包含任何 `st.*` 业务逻辑的纯函数；本模块仅做缓存封装。
 - 缓存返回值为可 pickle 的结构（DataFrame / dataclass），避免直接缓存 ORM 对象。
 """
 
 from datetime import datetime
-from typing import Optional
 
 import pandas as pd
 import streamlit as st
@@ -48,11 +46,3 @@ def cached_forecast(
     values = [getattr(r, value_col) for r in rows]
     timestamps = [r.timestamp for r in rows]
     return ps.forecast(values, timestamps, method=method, prediction_days=days)
-
-
-@st.cache_resource
-def cached_llm_provider() -> Optional[object]:
-    """共享 LLM Provider 客户端（整个会话仅初始化一次）。"""
-    from smart_farm.services.llm import get_provider
-
-    return get_provider()

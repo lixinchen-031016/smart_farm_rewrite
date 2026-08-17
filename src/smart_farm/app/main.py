@@ -10,12 +10,17 @@ import streamlit as st
 
 from smart_farm.app import auth_ui
 from smart_farm.app.pages import (
+    backup_restore,
     dashboard,
     data_analysis,
     data_cleaning,
     data_overview,
     decision,
+    log_viewer,
+    module_config,
     prediction,
+    system_monitoring,
+    user_management,
     visualization,
 )
 
@@ -35,6 +40,20 @@ MENU = {
     "可视化": "visualization",
     "本地数据预测": "prediction",
     "自动化决策": "decision",
+    "👥 用户管理": "user_management",
+    "📜 操作日志": "log_viewer",
+    "📡 系统监控": "system_monitoring",
+    "🧩 模块配置": "module_config",
+    "💾 备份与恢复": "backup_restore",
+}
+
+# 管理员专属页面（普通用户不出现在菜单中）
+ADMIN_PAGES = {
+    "user_management",
+    "log_viewer",
+    "system_monitoring",
+    "module_config",
+    "backup_restore",
 }
 
 
@@ -55,8 +74,10 @@ def _sidebar() -> None:
             st.session_state.clear()
             st.rerun()
 
-        choice = st.radio("功能菜单", list(MENU.keys()), key="menu")
-        page = MENU[choice]
+        role = st.session_state.get("role", "user")
+        visible = {k: v for k, v in MENU.items() if v not in ADMIN_PAGES or role == "admin"}
+        choice = st.radio("功能菜单", list(visible.keys()), key="menu")
+        page = visible[choice]
         if page != st.session_state["page"]:
             st.session_state["page"] = page
             st.rerun()
@@ -86,6 +107,16 @@ def main() -> None:
         prediction.show()
     elif page == "decision":
         decision.show()
+    elif page == "user_management":
+        user_management.show()
+    elif page == "log_viewer":
+        log_viewer.show()
+    elif page == "system_monitoring":
+        system_monitoring.show()
+    elif page == "module_config":
+        module_config.show()
+    elif page == "backup_restore":
+        backup_restore.show()
     else:
         st.session_state["page"] = "dashboard"
         st.rerun()

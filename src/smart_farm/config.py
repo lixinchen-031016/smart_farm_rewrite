@@ -1,6 +1,6 @@
 """类型化配置。
 
-所有配置项从环境变量 / `.env` 读取，敏感值（SECRET_KEY、DB 密码、LLM_API_KEY）
+所有配置项从环境变量 / `.env` 读取，敏感值（SECRET_KEY、DB 密码）
 一律外置，禁止硬编码。默认值仅用于本地开发（SQLite）。
 """
 
@@ -32,12 +32,6 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
     bcrypt_rounds: int = 12
-
-    # 可选 LLM（默认关闭，且绝不使用本地 Ollama）
-    llm_enabled: bool = False
-    llm_base_url: str = ""
-    llm_api_key: str = ""
-    llm_model: str = ""
 
 
 @lru_cache

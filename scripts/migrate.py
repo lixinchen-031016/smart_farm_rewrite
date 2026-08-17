@@ -12,8 +12,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from alembic import command
-from alembic.config import Config
+from alembic import command  # noqa: E402
+from alembic.config import Config  # noqa: E402
 
 
 def _config() -> Config:

@@ -2,7 +2,7 @@
 
 > 分析对象：`smart_farm_with_streamlit`（Streamlit 单体农业数据平台）
 > 范围：现状结论 → 重写目标 → 目标架构 → 模块处置 → 数据模型 → 分阶段路线
-> 约束：**不包含任何 Ollama / 本地大模型相关内容**，AI 洞察改为可插拔 Provider 抽象
+> 约束：**不包含任何 Ollama / 本地大模型相关内容**；AI 洞察模块已取消（不引入任何 LLM，见阶段 4）
 
 ---
 
@@ -184,29 +184,47 @@ smart_farm/
 - [x] `analysis_service`（已落地）；本次新增 `cleaning_service` / `anomaly_service`（从旧代码迁纯函数，修旧版 z-score 索引错位 bug）
 - [x] `decision_service`（规则配置化、修趋势计算）— 早期落地
 - [x] `prediction_service`（迁 Prophet/SARIMA，**去 torch/GPU**，naive 兜底，懒加载重依赖）— 早期落地
-- [x] `st.cache_data` / `cache_resource` 接入热点查询与模型（`app/cache.py`：传感器时序查询 ttl=300、预测结果 ttl=600、`cached_llm_provider` 共享客户端；仪表板/预测页已接入，并移除废弃的 `use_container_width` → `width="stretch"`）
+- [x] `st.cache_data` 接入热点查询与预测（`app/cache.py`：传感器时序查询 ttl=300、预测结果 ttl=600；仪表板/预测页已接入，并移除废弃的 `use_container_width` → `width="stretch"`）
 - [x] 上述 services 的 pytest 用例（`test_auth`/`test_analysis`/`test_decision`/`test_cleaning`/`test_anomaly`，共 24 例，CI 绿）
 - **交付**：核心算法可单测、与 UI 解耦 ✅
 
-### 阶段 2 — UI 移植（第 6–8 周）
-- [ ] `pages/`：综合仪表板、数据概览（DB/上传/导出）、数据清洗、数据分析、可视化、高级分析
-- [ ] 预测页（调用 `prediction_service`，异步 + 进度 + 置信区间）
-- [ ] 决策引擎页（接通 `decision_service`）
-- [ ] 实时预览改为定时轮询/可选 WebSocket（替代被禁用的旧模块）
-- **交付**：功能对齐旧版（除 AI 洞察外）的可运行前端
+### 阶段 2 — UI 移植（第 6–8 周）✅ 已完成
+- [x] `pages/dashboard.py`（综合仪表板，已落地 + 接缓存）
+- [x] `pages/data_overview.py`：用 `st.tabs` 拆为「数据库数据」（浏览某指标传感器数据表 + 下载）与「上传与导出」
+- [x] `pages/data_cleaning.py`（**新增**）：数据源「数据库 / 上传文件」切换，调用 `anomaly_service`（IQR/Z-Score/孤立森林）高亮异常点，调用 `cleaning_service` 去重/缺失值填补，展示清洗前后质量对比并导出 CSV
+- [x] `pages/data_analysis.py`（**新增**）：调用 `analysis_service` 的描述统计 / 相关性热力图 / 时间派生分组聚合
+- [x] `pages/visualization.py`（**新增**）：折线 / 直方图 / 箱线图 / 相关散点，传感器查询走 `cache.cached_sensor_df`
+- [x] `pages/prediction.py`：升级为「实际值 + 预测值 + 置信区间阴影带」（调用 `ForecastResult.yhat_lower/upper`）；长模型异步化列为后续增强
+- [x] `pages/decision.py`（自动化决策，已落地，接通 `decision_service`）
+- [x] `main.py` MENU 与路由接入全部 7 个页面
+- [x] 全程使用 `width="stretch"`（无废弃 `use_container_width`）
+- **验证**：`ruff` 全绿；`pytest` 24 项通过（1 项因未装 scikit-learn 跳过）；用 `streamlit.testing.v1.AppTest` 逐一渲染 7 个页面并触发「异常检测 / 清洗 / 预测」按钮交互，均无异常；`streamlit run` 启动 HTTP 200
+- **交付**：功能对齐旧版（除 AI 洞察外）的可运行前端 ✅
 
-### 阶段 3 — 系统管理与运维（第 9–10 周）
-- [ ] 用户管理、系统监控、日志查看、模块配置（声明式注册 + DB 开关，消除矛盾入口）
-- [ ] 备份/恢复（参数化 SQL + 显式 commit + AES 保留）
-- [ ] `sync_manager` 抽象为接口（默认关闭）、`history_report_viewer`
-- [ ] 使用说明 + 文档生成
-- **交付**：管理闭环完整
+### 阶段 3 — 系统管理与运维（第 9–10 周）✅ 已完成
+- [x] `app/guards.py`：`require_admin()` 基于 `st.session_state["role"]` 的角色守卫（普通用户菜单不显示管理页，直接访问给出无权限提示）
+- [x] `pages/user_management.py`：列出用户、修改角色（`repo.update_user_role` + `repo.add_log`）、创建用户（`repo.create_user` + `auth.hash_password`）；禁止取消自身管理员权限
+- [x] `pages/log_viewer.py`：`repo.get_logs` 按用户名/操作类型筛选 + 分页（PAGE_SIZE=50）
+- [x] `pages/system_monitoring.py`：用户数/日志数/大棚数指标卡、各指标数据量 `st.bar_chart`、大棚列表、`cleaning_service.assess_quality` 近 7 天抽样（已修 `air_temperature_humidity` 无 `value` 列 bug，改用正确列名 temperature/humidity）
+- [x] `pages/module_config.py`：`MODULE_REGISTRY` 声明式注册表（13 模块，只读展示），替代旧版"禁用却可直访"矛盾入口
+- [x] `pages/backup_restore.py`：`_dump` 导出 JSON 快照 / `_restore` ORM 参数化清空+重建（`DateTime` 列 `fromisoformat`、显式 `commit`）；上传 JSON + 勾选确认覆盖恢复
+- [x] `main.py`：导入全部 12 页；`MENU` 12 项 + `ADMIN_PAGES` 集合；`_sidebar` 按角色过滤菜单；`main()` 路由覆盖全部页面；所有 `st.dataframe` 用 `width="stretch"`（无 `use_container_width`）
+- [~] （暂缓，非阻塞）`sync_manager` 抽象为接口、`history_report_viewer`、使用说明 + 文档生成 — 留待 Phase 5 收尾增强
+- **验证**：`ruff` 全绿（含修复迁移文件与 `scripts/migrate.py` 的 W291/I001/E402）；`pytest` 24 项通过（1 项因未装 scikit-learn 跳过）；`AppTest` 全部页面 OK；`streamlit run` 启动 HTTP 200
+- **交付**：管理闭环完整（用户/日志/监控/模块配置/备份恢复 + 角色守卫）✅
 
-### 阶段 4 — AI 洞察（无 Ollama，可插拔）（第 11 周，可选）
-- [ ] `services/llm/`：`LLMProvider` 接口 + `openai_compatible` 实现（API Key 经配置注入）
-- [ ] `report_service`：AI 解读结果归档为 md/json（与 `history_report_viewer` 对接）
-- [ ] UI 页：可选开启；模型不可用时不报错、给出降级提示
-- **交付**：用云 LLM（或自建兼容服务）替代本地 Ollama，无本地模型拉取
+### 阶段 4 — AI 洞察（无 Ollama，可插拔）❌ 已取消
+> 经决策，AI 洞察模块整体取消，平台不引入任何 LLM / 本地模型。
+
+已执行的清理（代码无死代码、验证全绿）：
+- 删除 `src/smart_farm/services/llm/`（原 `LLMProvider` 抽象 + `openai_compatible` 实现）
+- 删除 `config.py` 中 `LLM_ENABLED` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` 配置项
+- 删除 `app/cache.py` 的 `cached_llm_provider` 及相关 `typing.Optional` 导入
+- 删除 `app/pages/module_config.py` 的「AI 洞察」注册表行
+- 删除 `.env.example` 的 `LLM_*` 占位
+- 因 `history_report_viewer` 依赖 AI 解读归档，一并取消（属于阶段 3 曾暂缓项）
+
+- **结论**：平台保留全部数据接入 / 清洗 / 分析 / 可视化 / 预测 / 决策 / 运维能力，AI 解读不作为交付项。
 
 ### 阶段 5 — 收尾与增强（第 12–14 周）
 - [ ] 测试补全 + 覆盖率门禁；文档自动化（README 由代码生成，消除旧文档脱节）
