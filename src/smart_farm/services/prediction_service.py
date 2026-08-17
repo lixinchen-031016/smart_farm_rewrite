@@ -81,7 +81,7 @@ def naive_forecast(
         history=hist,
         forecast=fc,
         method=f"naive({method})",
-        explanation="朴素预测（无需重依赖），仅供演示；安装 ml 依赖后可用 Prophet/SARIMA。",
+        explanation="朴素预测（无需重依赖）；Prophet/SARIMA 为内置必选依赖，可在模型选择中直接使用。",
     )
 
 
@@ -100,7 +100,7 @@ def prophet_forecast(
         from prophet import Prophet  # type: ignore
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
-            "未安装 prophet。请运行 `uv pip install -e '.[ml]'` 后重试。"
+            "未安装 prophet。请先安装项目完整依赖：`uv pip install -e .`。"
         ) from exc
 
     hist = _to_tsdf(values, timestamps)
@@ -132,7 +132,7 @@ def sarima_forecast(
         from statsmodels.tsa.statespace.sarimax import SARIMAX  # type: ignore
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
-            "未安装 statsmodels。请运行 `uv pip install -e '.[ml]'` 后重试。"
+            "未安装 statsmodels。请先安装项目完整依赖：`uv pip install -e .`。"
         ) from exc
 
     hist = _to_tsdf(values, timestamps).set_index("ds")["y"]
@@ -360,7 +360,7 @@ def multivariate_forecast(
     try:
         from sklearn.ensemble import RandomForestRegressor  # type: ignore
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("未安装 scikit-learn。请运行 `uv pip install -e '.[ml]'` 后重试。") from exc
+        raise RuntimeError("未安装 scikit-learn。请先安装项目完整依赖：`uv pip install -e .`。") from exc
 
     merged = pd.DataFrame(
         {

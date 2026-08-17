@@ -24,15 +24,13 @@ dependencies = [
     "httpx>=0.27",
     "alembic>=1.13",
     "pillow>=10.0",
-]
-
-[project.optional-dependencies]
-ml = [
     "scikit-learn>=1.4",
     "statsmodels>=0.14",
     "prophet>=1.1",
     "psutil>=6.0",
 ]
+
+[project.optional-dependencies]
 doc = [
     "python-docx>=1.1",
 ]

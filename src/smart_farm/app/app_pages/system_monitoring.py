@@ -72,7 +72,7 @@ with tab2:
     if not tab2.open:
         st.caption("切换到本标签页查看实时监控。")
     elif not sys_svc.is_psutil_available():
-        st.warning("未安装 psutil，实时监控不可用。可运行 `uv pip install -e '.[ml]'` 启用。")
+        st.warning("未安装 psutil，实时监控不可用。请先安装项目完整依赖：`uv pip install -e .`。")
     else:
         metrics = sys_svc.collect_system_metrics()
         if not metrics:
@@ -106,7 +106,7 @@ with tab3:
     if not tab3.open:
         st.caption("切换到本标签页查看性能分析。")
     elif not sys_svc.is_psutil_available():
-        st.warning("未安装 psutil，性能分析不可用。")
+        st.warning("未安装 psutil，性能分析不可用。请先安装项目完整依赖：`uv pip install -e .`。")
     else:
         metrics = sys_svc.collect_system_metrics()
         if metrics:
@@ -125,7 +125,7 @@ with tab4:
     if not tab4.open:
         st.caption("切换到本标签页查看系统信息。")
     elif not sys_svc.is_psutil_available():
-        st.warning("未安装 psutil，系统信息不可用。")
+        st.warning("未安装 psutil，系统信息不可用。请先安装项目完整依赖：`uv pip install -e .`。")
     else:
         info = sys_svc.collect_system_info()
         if info:

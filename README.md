@@ -38,7 +38,7 @@
 
 - UI：Streamlit ≥ 1.40 + Plotly
 - 数据：SQLAlchemy 2.0（MySQL 8.0 生产 / SQLite 开发）+ Alembic 迁移
-- 预测：Prophet / SARIMA（可选 `.[ml]` 依赖层）/ 朴素兜底（重依赖懒加载）
+- 预测：Prophet / SARIMA（必选依赖，随包安装）/ 朴素兜底
 - 认证：bcrypt + PyJWT（密钥外置，令牌不进 URL）
 - 配置：pydantic-settings（类型化，替代散落的 `os.getenv`）
 - 工程化：pytest + ruff + mypy + GitHub Actions
@@ -140,8 +140,7 @@ ruff check
 
 # 单元测试（services 层纯函数）
 pytest
-# 含预测/ML 用例需先安装可选依赖：uv pip install -e '.[ml]'
-# 未装 scikit-learn 时相关用例自动跳过
+# ML 依赖（scikit-learn/statsmodels/prophet/psutil）为必选，随 uv pip install -e . 一并安装
 
 # 类型检查（可选）
 mypy src

@@ -70,7 +70,7 @@ def detect_outliers_isolation_forest(
         from sklearn.preprocessing import StandardScaler
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
-            "未安装 scikit-learn。请运行 `uv pip install -e '.[ml]'` 后重试。"
+            "未安装 scikit-learn。请先安装项目完整依赖：`uv pip install -e .`。"
         ) from exc
 
     if columns is None:
