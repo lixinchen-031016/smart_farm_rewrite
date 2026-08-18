@@ -25,22 +25,35 @@ st.session_state.setdefault("logged_in", False)
 st.session_state.setdefault("role", "user")
 
 
-@st.cache_resource(show_spinner=False)
-def _autostart_iot_gateway() -> dict[str, str]:
-    """进程级单例启动 IoT 接入网关（HTTP/UDP/MQTT 按配置）。
+@st.cache_resource(show_spinner="启动中：正在同步主备数据库并启动 IoT 网关…")
+def _startup_tasks() -> dict:
+    """进程级单例启动任务：先主备库同步，再启动 IoT 接入网关。
 
-    cache_resource 保证：多个浏览器会话、无数次 rerun，网关只随进程启动一次；
-    通道线程为 daemon，随应用进程退出自动清理。
+    - 先同步后网关：保证故障转移期间写入备库的数据先合并回主库，
+      网关随后接入的新数据基于一致的状态写入。
+    - cache_resource 保证：多个浏览器会话、无数次 rerun，只随进程执行一次；
+      通道线程为 daemon，随应用进程退出自动清理。
     """
     from smart_farm import iot_gateway
+    from smart_farm.services import sync_service
 
-    return iot_gateway.start_gateway_background(
-        iot_gateway.parse_channels(get_settings().gateway_channels)
+    settings = get_settings()
+    sync_result = (
+        sync_service.startup_sync()
+        if settings.auto_sync_on_startup
+        else {"status": "skipped", "reason": "已关闭启动同步（AUTO_SYNC_ON_STARTUP=false）"}
     )
+    gateway_state: dict = {}
+    if settings.auto_start_gateway:
+        gateway_state = iot_gateway.start_gateway_background(
+            iot_gateway.parse_channels(settings.gateway_channels)
+        )
+    return {"sync": sync_result, "gateway": gateway_state}
 
 
-if get_settings().auto_start_gateway:
-    _autostart_iot_gateway()
+_settings_for_startup = get_settings()
+if _settings_for_startup.auto_start_gateway or _settings_for_startup.auto_sync_on_startup:
+    _startup_tasks()
 
 # 未登录：只显示认证页，不构建导航
 if not st.session_state["logged_in"]:

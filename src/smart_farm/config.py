@@ -28,11 +28,16 @@ class Settings(BaseSettings):
     app_name: str = "智慧大棚数据管理平台"
     debug: bool = False
 
-    # 数据库
+    # 数据库（主库；备库可选——两者可分别为 SQLite / MySQL，实现无感切换与故障转移）
     database_url: str = "sqlite:///./smart_farm.db"
+    database_fallback_url: Optional[str] = None  # 例：mysql+pymysql://user:pass@host:3306/smart_farm
     db_pool_size: int = 5
     db_max_overflow: int = 10
     db_echo: bool = False
+    db_connect_timeout: int = 5  # 主/备库连通性探测超时（秒）
+    db_failover_cooldown_seconds: int = 60  # 运行时故障转移冷却，防主库抖动来回切换
+    # 每次程序启动前自动同步主备库（传感器/日志增量双向 + 管理表按唯一键补齐）
+    auto_sync_on_startup: bool = True
 
     # 认证
     secret_key: str = _INSECURE_DEFAULT_SECRET

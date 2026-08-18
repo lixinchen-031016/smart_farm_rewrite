@@ -123,6 +123,62 @@ with tab3:
                 st.markdown(f"{i}. {rec}")
 
 with tab4:
+    st.subheader("数据库连接状态")
+    from smart_farm.data import database as db_mod
+
+    info = db_mod.active_database_info()
+    role_label = "主库" if info["role"] == "primary" else "备用库（故障转移中）"
+    c1, c2 = st.columns(2)
+    c1.metric("当前连接", info["dialect"].upper() if info["dialect"] else "-")
+    c2.metric("角色", role_label)
+    st.code(info["active_url"], language="text")
+    if info["role"] == "fallback":
+        st.warning(
+            f"主库不可达已自动切换到备用库（{info['switched_at']}）。"
+            "期间新数据将写入备用库，恢复后建议用「数据库同步」页合并。"
+        )
+        if st.button("尝试切回主库", icon=":material/swap_horiz:"):
+            ok, msg = db_mod.reconnect_primary()
+            (st.success if ok else st.error)(msg)
+            st.rerun()
+    elif info["fallback_configured"]:
+        st.caption(
+            f"已配置备库：{info['fallback_url']}——主库失联时自动切换（冷却 "
+            f"{db_mod._settings.db_failover_cooldown_seconds} 秒）。"
+        )
+    else:
+        st.caption("未配置备库（DATABASE_FALLBACK_URL），主库失联时无法自动切换。")
+
+    # 最近一次启动同步结果
+    from smart_farm.services import sync_service as sync_svc
+
+    last = sync_svc.last_sync_result()
+    if not last:
+        st.caption("本次启动未执行数据库同步。")
+    elif last.get("status") != "ok":
+        st.caption(f"上次启动同步跳过：{last.get('reason', '未知原因')}")
+    else:
+        t, mgmt = last["tables"], last["management"]
+        mgmt_added = sum(mgmt.values())
+        p2f = last["total"]["primary_to_fallback"]
+        f2p = last["total"]["fallback_to_primary"]
+        if p2f == 0 and f2p == 0 and mgmt_added == 0:
+            st.success(f"上次启动同步（{last['finished_at']}）：主备库数据一致，无需迁移。")
+        else:
+            with st.expander(
+                f"上次启动同步（{last['finished_at']}）：主→备 {p2f} 行，备→主 {f2p} 行，管理表新增 {mgmt_added} 条",
+                expanded=True,
+            ):
+                rows = [
+                    {"表": name, "主库→备库": v["primary_to_fallback"], "备库→主库": v["fallback_to_primary"]}
+                    for name, v in t.items()
+                ]
+                rows += [
+                    {"表": f"管理表:{k}", "主库→备库": "", "备库→主库": v}
+                    for k, v in mgmt.items() if v
+                ]
+                st.table(rows)
+
     st.subheader("系统信息")
     if not tab4.open:
         st.caption("切换到本标签页查看系统信息。")

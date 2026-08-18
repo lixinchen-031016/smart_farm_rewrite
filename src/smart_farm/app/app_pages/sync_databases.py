@@ -9,6 +9,7 @@ import streamlit as st
 
 from smart_farm.app.guards import require_admin
 from smart_farm.config import get_settings
+from smart_farm.data.database import get_active_url
 from smart_farm.services import sync_service as ss
 
 st.title("数据库同步")
@@ -16,19 +17,20 @@ if not require_admin():
     st.stop()
 
 _settings = get_settings()
+_local_url = get_active_url()  # 跟随当前活动库（主库故障转移后同步的是备用库）
 
 
 def _conn_default(prefix: str) -> tuple[str, int, str, str, str]:
     """从环境变量读取连接默认值（对齐旧版 env 默认）。"""
-    host = _settings.database_url.split("//")[-1].split(":")[0] if "sqlite" not in _settings.database_url else "localhost"
+    host = _local_url.split("//")[-1].split(":")[0] if "sqlite" not in _local_url else "localhost"
     return host, 3306, "intelligent_farm", "root", ""
 
 
 st.caption("基于最大时间戳的增量双向同步（云端 ↔ 本地，4 张传感器表）。默认不自动运行，手动触发。")
 
 # 本地数据库信息（只读展示）
-st.subheader("本地数据库")
-st.code(_settings.database_url, language="text")
+st.subheader("本地数据库（当前活动库）")
+st.code(_local_url, language="text")
 
 # 云端数据库信息（可编辑）
 st.subheader("云端数据库连接")
@@ -62,19 +64,19 @@ cloud_url = ss.build_mysql_url(conn["host"], conn["port"], conn["name"], conn["u
 c1, c2, c3 = st.columns(3)
 with c1:
     if st.button("测试连接", icon=":material/wifi_tethering:"):
-        ok, msg = ss.DatabaseSync(cloud_url, _settings.database_url).test_connection(cloud_url)
+        ok, msg = ss.DatabaseSync(cloud_url, _local_url).test_connection(cloud_url)
         st.success(msg) if ok else st.error(msg)
 with c2:
     if st.button("验证权限", icon=":material/verified:"):
         st.info("权限验证需在目标库执行写入测试；当前为连接校验。")
-        ok, msg = ss.DatabaseSync(cloud_url, _settings.database_url).test_connection(cloud_url)
+        ok, msg = ss.DatabaseSync(cloud_url, _local_url).test_connection(cloud_url)
         st.success("连接正常，可执行同步。") if ok else st.error(msg)
 with c3:
     if st.button("开始同步", type="primary", icon=":material/sync:"):
         st.warning("生产环境请先备份！")
         with st.spinner("同步中..."):
             try:
-                sync = ss.DatabaseSync(cloud_url, _settings.database_url)
+                sync = ss.DatabaseSync(cloud_url, _local_url)
                 stats = sync.sync_all_data()
                 sync.close()
             except Exception as e:  # noqa: BLE001

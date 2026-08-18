@@ -94,9 +94,9 @@ def test_sync_all_data(dbs):
     _add(cloud_sess, "soil_nutrient", base, 40.0)
     _add(cloud_sess, "light_intensity", base, 1000.0)
     stats_list = sync.sync_all_data()
-    assert len(stats_list) == 4
+    assert len(stats_list) == 5  # 4 张传感器表 + 操作日志
     total = sum(s["cloud_to_local"] for s in stats_list)
-    assert total == 4
+    assert total == 4  # operation_logs 为空表贡献 0
 
 
 def test_sync_same_timestamp_batch(dbs):

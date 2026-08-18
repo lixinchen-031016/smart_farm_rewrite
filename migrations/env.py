@@ -22,8 +22,9 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 _settings = get_settings()
-# 覆盖 alembic.ini 中的占位 URL
-config.set_main_option("sqlalchemy.url", _settings.database_url)
+# URL 优先级：database.run_migrations() 注入的活动库（故障转移后仍作用于当前库）
+# > 配置的 DATABASE_URL
+config.set_main_option("sqlalchemy.url", config.attributes.get("db_url") or _settings.database_url)
 
 target_metadata = Base.metadata
 

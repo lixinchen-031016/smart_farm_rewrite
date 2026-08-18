@@ -2104,9 +2104,11 @@ dependencies = [
     { name = "altair" },
     { name = "bcrypt" },
     { name = "cryptography" },
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "numpy" },
     { name = "openpyxl" },
+    { name = "paho-mqtt" },
     { name = "pandas" },
     { name = "pillow" },
     { name = "plotly" },
@@ -2117,11 +2119,13 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt" },
     { name = "pymysql" },
+    { name = "python-docx" },
     { name = "python-dotenv" },
     { name = "scikit-learn" },
     { name = "sqlalchemy" },
     { name = "statsmodels" },
     { name = "streamlit" },
+    { name = "uvicorn" },
     { name = "xlsxwriter" },
 ]
 
@@ -2132,14 +2136,6 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
-doc = [
-    { name = "python-docx" },
-]
-iot = [
-    { name = "fastapi" },
-    { name = "paho-mqtt" },
-    { name = "uvicorn" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -2147,12 +2143,12 @@ requires-dist = [
     { name = "altair", specifier = ">=5.0" },
     { name = "bcrypt", specifier = ">=4.0" },
     { name = "cryptography", specifier = ">=42.0" },
-    { name = "fastapi", marker = "extra == 'iot'", specifier = ">=0.111" },
+    { name = "fastapi", specifier = ">=0.111" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openpyxl", specifier = ">=3.1" },
-    { name = "paho-mqtt", marker = "extra == 'iot'", specifier = ">=1.6" },
+    { name = "paho-mqtt", specifier = ">=1.6" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "plotly", specifier = ">=5.20" },
@@ -2165,17 +2161,17 @@ requires-dist = [
     { name = "pymysql", specifier = ">=1.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
-    { name = "python-docx", marker = "extra == 'doc'", specifier = ">=1.1" },
+    { name = "python-docx", specifier = ">=1.1" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "scikit-learn", specifier = ">=1.4" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "statsmodels", specifier = ">=0.14" },
     { name = "streamlit", specifier = ">=1.40" },
-    { name = "uvicorn", marker = "extra == 'iot'", specifier = ">=0.30" },
+    { name = "uvicorn", specifier = ">=0.30" },
     { name = "xlsxwriter", specifier = ">=3.1" },
 ]
-provides-extras = ["doc", "iot", "dev"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "smmap"
