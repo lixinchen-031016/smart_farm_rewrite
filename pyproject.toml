@@ -28,17 +28,15 @@ dependencies = [
     "statsmodels>=0.14",
     "prophet>=1.1",
     "psutil>=6.0",
-]
-
-[project.optional-dependencies]
-doc = [
-    "python-docx>=1.1",
-]
-iot = [
+    # IoT 网关（HTTP/MQTT/UDP 设备接入，随应用自动启动）
     "fastapi>=0.111",
     "uvicorn>=0.30",
     "paho-mqtt>=1.6",
+    # 报告导出（docx）
+    "python-docx>=1.1",
 ]
+
+[project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",

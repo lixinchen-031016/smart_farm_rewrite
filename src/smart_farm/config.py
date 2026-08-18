@@ -46,7 +46,9 @@ class Settings(BaseSettings):
     login_rate_limit_max_attempts: int = 10
     login_rate_limit_window_seconds: int = 30
 
-    # IoT 网关（python -m smart_farm.iot_gateway；协议可按 --http/--mqtt/--udp 开关）
+    # IoT 网关（随应用自动启动；也可独立运行 python -m smart_farm.iot_gateway）
+    auto_start_gateway: bool = True
+    gateway_channels: str = "http,udp"  # 逗号分隔：http / mqtt / udp（mqtt 需可达的 Broker）
     iot_http_host: str = "0.0.0.0"
     iot_http_port: int = 8600
     iot_udp_host: str = "0.0.0.0"

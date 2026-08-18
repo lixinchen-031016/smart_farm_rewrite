@@ -136,8 +136,39 @@ with c_edit:
                         st.success("大棚信息已更新。")
                 st.rerun()
 
+# ---------------- 网关运行状态 ----------------
+st.subheader("网关运行状态")
+from smart_farm import iot_gateway as gw  # noqa: E402
+
+gw_state = gw.gateway_status()
+if not gw_state:
+    st.info(
+        "网关未随应用启动（AUTO_START_GATEWAY=false 或独立部署）。"
+        "设备可通过独立网关进程接入：`python -m smart_farm.iot_gateway`。"
+    )
+else:
+    status_rows = []
+    for channel, desc in gw_state.items():
+        ok = desc.startswith("running")
+        status_rows.append({
+            "通道": channel.upper(),
+            "状态": "运行中" if ok else "启动失败",
+            "详情": desc.split(":", 1)[1] if ":" in desc else desc,
+        })
+    st.dataframe(pd.DataFrame(status_rows), width="stretch", hide_index=True)
+    failed = [c for c, d in gw_state.items() if not d.startswith("running")]
+    if failed:
+        st.warning(
+            f"通道 {'、'.join(failed)} 未能在本进程启动（常见原因：端口被占用，"
+            "或已有独立网关进程在监听，此时数据仍可正常接入）。"
+        )
+
 # ---------------- 接入说明 ----------------
 st.subheader("设备接入说明")
+st.caption(
+    f"网关默认随应用自动启动：HTTP(:{settings.iot_http_port}) + UDP(:{settings.iot_udp_port})。"
+    "MQTT 需外部 Broker，可在 .env 配置 GATEWAY_CHANNELS=http,udp,mqtt 开启。"
+)
 with st.expander("HTTP（适合网关 / 树莓派 / 任何能发 HTTP 的设备）", expanded=False):
     st.markdown(f"""
 **端点**：`POST http://<服务器>:{settings.iot_http_port}/api/v1/ingest`
@@ -165,7 +196,7 @@ mosquitto_pub -h {settings.mqtt_host} -p {settings.mqtt_port} \\
 ```
 
 - `device_key` 也可写在 JSON 里，此时 topic 任意。
-- 网关启动 MQTT 通道：`python -m smart_farm.iot_gateway --only mqtt`（需 `uv pip install -e '.[iot]'`）。
+- MQTT 通道默认不随应用启动（需外部 Broker）；在 `.env` 配置 `GATEWAY_CHANNELS=http,udp,mqtt` 与 `MQTT_HOST` 后随应用自动启动，或独立运行网关。
 """)
 with st.expander("UDP 局域网直推（适合 ESP32/Arduino 等无 HTTP 栈的 MCU）", expanded=False):
     st.markdown(f"""
@@ -177,13 +208,18 @@ with st.expander("UDP 局域网直推（适合 ESP32/Arduino 等无 HTTP 栈的 
 
 批量：`{{"device_key": "sf-xxxx", "readings": [{{...}}, {{...}}]}}`。单包 ≤ 64KB。
 """)
-with st.expander("启动网关", expanded=False):
+with st.expander("网关启动方式", expanded=False):
     st.markdown(f"""
+**随应用自动启动（默认）**：Streamlit 应用启动时自动拉起 HTTP(:{settings.iot_http_port}) + UDP(:{settings.iot_udp_port}) 通道，
+无需手动操作；可在 `.env` 用 `AUTO_START_GATEWAY=false` 关闭，或 `GATEWAY_CHANNELS` 调整通道。
+
+**独立网关进程（生产多机/端口冲突时）**：
+
 ```bash
 python -m smart_farm.iot_gateway             # HTTP(:{settings.iot_http_port}) + UDP(:{settings.iot_udp_port})
 python -m smart_farm.iot_gateway --only mqtt # 仅 MQTT
 python -m smart_farm.iot_gateway --no-http   # MQTT + UDP
 ```
 
-可选依赖：`uv pip install -e '.[iot]'`（fastapi / uvicorn / paho-mqtt）。
+依赖（fastapi / uvicorn / paho-mqtt）已随主程序安装，无需额外安装。
 """)

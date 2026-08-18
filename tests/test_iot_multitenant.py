@@ -1,46 +1,16 @@
-"""IoT 接入与多租户功能测试：ingest_service / repositories 新函数 / 网关 / seed。"""
+"""IoT 接入与多租户功能测试：ingest_service / repositories 新函数 / 网关 / seed。
+
+fixture（session/gh/device）见 conftest.py。
+"""
 
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from smart_farm.data import repositories as repo
-from smart_farm.data.models import Base, Device, UserGreenhouse
+from smart_farm.data.models import Device, UserGreenhouse
 from smart_farm.services import ingest_service as ingest
 from smart_farm.services.ingest_service import IngestError
-
-
-@pytest.fixture()
-def session():
-    # TestClient 在独立线程处理请求 → SQLite 需允许跨线程共享单一连接
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, expire_on_commit=False)
-    s = Session()
-    yield s
-    s.close()
-    engine.dispose()
-
-
-@pytest.fixture()
-def gh(session):
-    return repo.create_greenhouse(session, "一号棚", "东区")
-
-
-@pytest.fixture()
-def device(session, gh):
-    return repo.create_device(
-        session, name="土壤节点", protocol="http",
-        device_key="sf-test-key-0001", greenhouse_id=gh.id,
-    )
-
 
 # ----------------------------- ingest_service -----------------------------
 

@@ -5,11 +5,13 @@
 - 页面文件为直接脚本，不包裹 `show()` 函数。
 - 登录态存于 `st.session_state`，**JWT 不写入 URL query_params**（修复旧版泄露风险）。
 - 业务逻辑全部委托给 `services/*`，本文件不含算法。
+- IoT 网关随应用自动启动（`st.cache_resource` 进程级单例，多会话/多次 rerun 仅启动一次）。
 """
 
 import streamlit as st
 
 from smart_farm.app import auth_ui, greenhouse_context
+from smart_farm.config import get_settings
 from smart_farm.services import module_manager as mm
 
 st.set_page_config(
@@ -21,6 +23,24 @@ st.set_page_config(
 
 st.session_state.setdefault("logged_in", False)
 st.session_state.setdefault("role", "user")
+
+
+@st.cache_resource(show_spinner=False)
+def _autostart_iot_gateway() -> dict[str, str]:
+    """进程级单例启动 IoT 接入网关（HTTP/UDP/MQTT 按配置）。
+
+    cache_resource 保证：多个浏览器会话、无数次 rerun，网关只随进程启动一次；
+    通道线程为 daemon，随应用进程退出自动清理。
+    """
+    from smart_farm import iot_gateway
+
+    return iot_gateway.start_gateway_background(
+        iot_gateway.parse_channels(get_settings().gateway_channels)
+    )
+
+
+if get_settings().auto_start_gateway:
+    _autostart_iot_gateway()
 
 # 未登录：只显示认证页，不构建导航
 if not st.session_state["logged_in"]:

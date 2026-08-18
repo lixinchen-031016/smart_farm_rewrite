@@ -1,13 +1,20 @@
-"""IoT 接入网关（独立运行：`python -m smart_farm.iot_gateway`）。
+"""IoT 接入网关。
+
+两种运行方式：
+1. 随应用自动启动（默认）：Streamlit 入口 `main.py` 经 `st.cache_resource` 调用
+   `start_gateway_background()`，进程内单例运行（多会话/rerun 仅一次）。
+   通道由 `GATEWAY_CHANNELS` 配置（默认 http,udp；mqtt 需外部 Broker），
+   `AUTO_START_GATEWAY=false` 可关闭。
+2. 独立进程：`python -m smart_farm.iot_gateway [--only http|mqtt|udp | --no-*]`。
 
 三协议统一走 `services.ingest_service.ingest_payload`（设备认证 + 归一化 + 入库）：
 
-1. HTTP（FastAPI + uvicorn，需 `uv pip install -e '.[iot]'`）
+1. HTTP（FastAPI + uvicorn）
    POST /api/v1/ingest        Bearer <device_key> 或 X-Device-Key 头
    POST /api/v1/ingest/batch  同上，readings 数组
    GET  /api/v1/health        健康检查
 
-2. MQTT（paho-mqtt，需同上可选依赖）
+2. MQTT（paho-mqtt，需外部 Broker）
    订阅 `{prefix}+/data`；device_key 取自 topic 或 payload，如：
    smart_farm/sf-abc.../data  →  {"metric": "soil_moisture", "value": 42.1}
 
@@ -26,7 +33,8 @@ import json
 import logging
 import socket
 import threading
-from typing import Any, Optional
+import time
+from typing import Any, Optional, Sequence
 
 from smart_farm.config import get_settings
 from smart_farm.data.database import get_session
@@ -35,6 +43,8 @@ from smart_farm.services.ingest_service import IngestError, IngestResult
 
 logger = logging.getLogger("smart_farm.iot_gateway")
 settings = get_settings()
+
+VALID_CHANNELS = ("http", "mqtt", "udp")
 
 
 # ----------------------------- 共享入库逻辑 -----------------------------
@@ -59,12 +69,20 @@ class UDPIngestServer(threading.Thread):
         self.host, self.port = host, port
         self._sock: Optional[socket.socket] = None
         self._stop = threading.Event()
+        self.start_error: Optional[str] = None  # 绑定失败原因（端口占用等）
+        self.ready = threading.Event()
 
     def run(self) -> None:
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind((self.host, self.port))
-        self._sock.settimeout(1.0)
+        try:
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._sock.bind((self.host, self.port))
+            self._sock.settimeout(1.0)
+        except OSError as e:
+            self.start_error = str(e)
+            logger.error("UDP 绑定 %s:%d 失败：%s", self.host, self.port, e)
+            return
+        self.ready.set()
         logger.info("UDP 接入监听 %s:%d", self.host, self.port)
         while not self._stop.is_set():
             try:
@@ -206,66 +224,155 @@ def create_http_app():
     return app
 
 
-# ----------------------------- 入口 -----------------------------
+# ----------------------------- 后台启动（应用进程内单例） -----------------------------
+
+_gateway_lock = threading.Lock()
+_gateway_state: dict[str, str] = {}  # channel -> "running" | "failed: 原因"
+_gateway_runner: dict[str, Any] = {}  # channel -> 可 stop 的运行器
+
+
+def parse_channels(spec: str) -> list[str]:
+    """解析逗号分隔的通道配置，忽略非法项。"""
+    return [c.strip() for c in spec.split(",") if c.strip() in VALID_CHANNELS]
+
+
+def _start_http_channel() -> str:
+    """线程内起 uvicorn，等待启动结果（started / 失败）。"""
+    import uvicorn
+
+    server = uvicorn.Server(
+        uvicorn.Config(
+            create_http_app(),
+            host=settings.iot_http_host,
+            port=settings.iot_http_port,
+            log_level="warning",
+        )
+    )
+    _gateway_runner["http"] = server
+
+    def _run() -> None:
+        try:
+            server.run()
+        except Exception as e:  # noqa: BLE001 端口占用等启动失败不能拖垮应用
+            logger.error("HTTP 网关启动失败：%s", e)
+            server.should_exit = True
+
+    threading.Thread(target=_run, daemon=True, name="http-ingest").start()
+    for _ in range(60):  # 最多等 3 秒确认启动
+        if server.started or server.should_exit:
+            break
+        time.sleep(0.05)
+    if server.started:
+        return f"running:{settings.iot_http_host}:{settings.iot_http_port}"
+    return f"failed:端口 {settings.iot_http_port} 启动失败（可能被占用或已由独立网关进程监听）"
+
+
+def _start_udp_channel() -> str:
+    server = UDPIngestServer(settings.iot_udp_host, settings.iot_udp_port)
+    _gateway_runner["udp"] = server
+    server.start()
+    server.ready.wait(timeout=3)
+    if server.start_error:
+        return f"failed:{server.start_error}"
+    return f"running:{settings.iot_udp_host}:{settings.iot_udp_port}"
+
+
+def _start_mqtt_channel() -> str:
+    try:
+        client = MQTTIngestClient()
+        client.start()
+    except Exception as e:  # noqa: BLE001 Broker 不可达等由 paho 后台自动重连
+        return f"failed:{e}"
+    _gateway_runner["mqtt"] = client
+    return f"running:{settings.mqtt_host}:{settings.mqtt_port}（Broker 不可达时自动重连）"
+
+
+_CHANNEL_STARTERS = {
+    "http": _start_http_channel,
+    "udp": _start_udp_channel,
+    "mqtt": _start_mqtt_channel,
+}
+
+
+def start_gateway_background(channels: Optional[Sequence[str]] = None) -> dict[str, str]:
+    """幂等启动接入通道（应用进程内单例，多次调用安全）。
+
+    供 Streamlit 入口在应用启动时调用；每个通道独立容错，
+    单通道失败（端口占用等）不影响其他通道与应用本体。
+
+    Returns:
+        {channel: 状态描述}，状态以 "running:" 开头表示正常。
+    """
+    with _gateway_lock:
+        if _gateway_state:
+            return dict(_gateway_state)  # 已启动，直接返回现状
+        wanted = list(channels) if channels else ["http", "udp"]
+        for channel in wanted:
+            if channel not in VALID_CHANNELS:
+                continue
+            starter = _CHANNEL_STARTERS[channel]
+            try:
+                _gateway_state[channel] = starter()
+            except Exception as e:  # noqa: BLE001 单通道失败不阻断其余通道
+                _gateway_state[channel] = f"failed:{e}"
+                logger.error("网关通道 %s 启动异常：%s", channel, e)
+        logger.info("IoT 网关（内嵌）状态：%s", _gateway_state)
+        return dict(_gateway_state)
+
+
+def gateway_status() -> dict[str, str]:
+    """当前网关通道状态（未启动返回空 dict）。"""
+    with _gateway_lock:
+        return dict(_gateway_state)
+
+
+def _stop_gateway() -> None:
+    """停止所有通道（仅独立网关进程退出时用）。"""
+    for name, runner in _gateway_runner.items():
+        try:
+            if hasattr(runner, "stop"):
+                runner.stop()
+            elif hasattr(runner, "should_exit"):
+                runner.should_exit = True
+        except Exception:  # noqa: BLE001 关停尽力而为
+            logger.exception("停止 %s 通道失败", name)
+
+
+# ----------------------------- 入口（独立网关进程） -----------------------------
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="SmartFarm IoT 接入网关")
-    parser.add_argument("--only", choices=["http", "mqtt", "udp"], help="只启动指定协议")
+    parser.add_argument("--only", choices=list(VALID_CHANNELS), help="只启动指定协议")
     parser.add_argument("--no-http", action="store_true", help="不启动 HTTP")
     parser.add_argument("--no-mqtt", action="store_true", help="不启动 MQTT")
     parser.add_argument("--no-udp", action="store_true", help="不启动 UDP")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    running: list[tuple[str, Any]] = []
+
+    if args.only:
+        channels = [args.only]
+    else:
+        channels = [
+            c for c in ("http", "mqtt", "udp")
+            if not {"http": args.no_http, "mqtt": args.no_mqtt, "udp": args.no_udp}[c]
+        ]
+    if not channels:
+        logger.error("没有任何接入通道被启动（检查 --only/--no-* 参数）")
+        return 1
 
     try:
-        if args.only == "http" or (not args.only and not args.no_http):
-            import uvicorn
-
-            config = uvicorn.Config(
-                create_http_app(),
-                host=settings.iot_http_host,
-                port=settings.iot_http_port,
-                log_level="info",
-            )
-            server = uvicorn.Server(config)
-            threading.Thread(
-                target=server.run, daemon=True, name="http-ingest"
-            ).start()
-            running.append(("http", server))
-
-        if args.only == "mqtt" or (not args.only and not args.no_mqtt):
-            try:
-                mqtt_client = MQTTIngestClient()
-                mqtt_client.start()
-                running.append(("mqtt", mqtt_client))
-            except ImportError:
-                logger.warning("paho-mqtt 未安装，跳过 MQTT 通道（uv pip install -e '.[iot]'）")
-
-        if args.only == "udp" or (not args.only and not args.no_udp):
-            udp_server = UDPIngestServer(settings.iot_udp_host, settings.iot_udp_port)
-            udp_server.start()
-            running.append(("udp", udp_server))
-
-        if not running:
-            logger.error("没有任何接入通道被启动（检查 --only/--no-* 参数）")
+        state = start_gateway_background(channels)
+        if not any(v.startswith("running") for v in state.values()):
+            logger.error("全部通道启动失败：%s", state)
             return 1
-
-        logger.info("IoT 网关已启动：%s", "、".join(name for name, _ in running))
+        logger.info("IoT 网关已启动：%s", state)
         threading.Event().wait()  # 主线程常驻
     except KeyboardInterrupt:
         logger.info("收到中断，网关退出")
     finally:
-        for name, runner in running:
-            try:
-                if hasattr(runner, "stop"):
-                    runner.stop()
-                elif hasattr(runner, "should_exit"):
-                    runner.should_exit = True
-            except Exception:  # noqa: BLE001 关停尽力而为
-                logger.exception("停止 %s 通道失败", name)
+        _stop_gateway()
     return 0
 
 
