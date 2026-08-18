@@ -34,8 +34,13 @@ def cached_sensor_df(
         rows = repo.get_sensor_readings(
             s, metric, start=start, limit=limit, greenhouse_id=greenhouse_id
         )
+    # dict 构造保证空结果也带 timestamp/value 列（列表推导式在 0 行时生成无列空表，
+    # 会让下游 sort_values("timestamp") 抛 KeyError）
     return pd.DataFrame(
-        [{"timestamp": r.timestamp, "value": getattr(r, value_col)} for r in rows]
+        {
+            "timestamp": [r.timestamp for r in rows],
+            "value": [getattr(r, value_col) for r in rows],
+        }
     )
 
 
