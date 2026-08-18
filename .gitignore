@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Secrets / local config (never commit real values)
+.env
+.env
+!.env
+
+# Databases (local dev sqlite)
+*.db
+*.sqlite3
+
+# Logs & exports
+*.log
+ai_insights_exports/
+predictions_exports/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store

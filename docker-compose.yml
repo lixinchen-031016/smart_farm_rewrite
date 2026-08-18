@@ -1,0 +1,51 @@
+# 智慧大棚数据管理平台 — 部署编排
+#
+# 强密钥占位：以下 *CHANGE_ME* 均为占位，生产部署前必须通过环境变量 / secrets 覆盖：
+#   export SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
+#   export MYSQL_ROOT_PASSWORD=...  MYSQL_PASSWORD=...  DATABASE_URL=...
+# 切勿将真实密钥提交进仓库。
+
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      # 生产请用 MySQL，例如：
+      # DATABASE_URL=mysql+pymysql://farmuser:CHANGE_ME_DB_PWD@db:3306/intelligent_farm
+      DATABASE_URL: "${DATABASE_URL:-sqlite:///./smart_farm.db}"
+      SECRET_KEY: "${SECRET_KEY:-CHANGE_ME_STRONG_RANDOM_32CHAR_MIN}"
+      JWT_ALGORITHM: "HS256"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "1440"
+      BCRYPT_ROUNDS: "12"
+      SEED_DATA: "${SEED_DATA:-0}"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8501/_stcore/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-CHANGE_ME_DB_ROOT_PWD}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-intelligent_farm}"
+      MYSQL_USER: "${MYSQL_USER:-farmuser}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:-CHANGE_ME_DB_PWD}"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-CHANGE_ME_DB_ROOT_PWD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  db_data:

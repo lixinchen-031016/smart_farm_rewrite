@@ -1,0 +1,70 @@
+{
+  "integrated_dashboard": {
+    "enabled": true,
+    "admin_only": false
+  },
+  "data_overview": {
+    "enabled": true,
+    "admin_only": false
+  },
+  "data_cleaning": {
+    "enabled": true,
+    "admin_only": false
+  },
+  "data_analysis": {
+    "enabled": true,
+    "admin_only": false
+  },
+  "advanced_analysis": {
+    "enabled": true,
+    "admin_only": false
+  },
+  "data_visualization": {
+    "enabled": true,
+    "admin_only": false
+  },
+  "data_prediction": {
+    "enabled": true,
+    "admin_only": false
+  },
+  "automated_decision": {
+    "enabled": true,
+    "admin_only": false
+  },
+  "history_reports": {
+    "enabled": true,
+    "admin_only": true
+  },
+  "user_management": {
+    "enabled": true,
+    "admin_only": true
+  },
+  "system_monitoring": {
+    "enabled": true,
+    "admin_only": true
+  },
+  "log_viewer": {
+    "enabled": true,
+    "admin_only": true
+  },
+  "data_backup": {
+    "enabled": true,
+    "admin_only": true
+  },
+  "sync_databases": {
+    "enabled": true,
+    "admin_only": true
+  },
+  "use_instruction": {
+    "enabled": true,
+    "admin_only": false
+  },
+  "module_config": {
+    "enabled": true,
+    "admin_only": true
+  },
+  "debug_info": {
+    "enabled": false,
+    "admin_only": true
+  }
+}
