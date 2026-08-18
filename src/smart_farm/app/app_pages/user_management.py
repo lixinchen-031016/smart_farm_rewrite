@@ -71,6 +71,45 @@ df = pd.DataFrame(
 st.subheader("用户列表")
 st.dataframe(df, width="stretch")
 
+# ---------------- 大棚授权（多租户） ----------------
+with get_session() as s:
+    ghs = repo.list_greenhouses(s)
+
+if ghs:
+    st.subheader("大棚授权（多棚多用户）")
+    st.caption("普通用户仅能看到并操作被授权的大棚；管理员默认可见全部。")
+    with st.form("grant_gh_form"):
+        grant_target = st.selectbox("选择用户", [u.username for u in users], key="grant_target")
+        current_ids: list[int] = []
+        for u in users:
+            if u.username == grant_target:
+                current_ids = repo.list_greenhouse_ids_for_user(s, u.id)
+                break
+        # 兼容旧字段 User.greenhouse_id：作为初始勾选的一部分展示
+        for u in users:
+            if u.username == grant_target and u.greenhouse_id is not None:
+                current_ids = list(set(current_ids + [u.greenhouse_id]))
+        picked = st.multiselect(
+            "授权大棚",
+            [g.id for g in ghs],
+            default=sorted(current_ids),
+            format_func=lambda i: next(g.name for g in ghs if g.id == i),
+            key="grant_picked",
+        )
+        if st.form_submit_button("保存授权", type="primary", icon=":material/key:"):
+            with get_session() as s2:
+                target_id = _user_id(s2, grant_target)
+                if target_id < 0:
+                    st.error("目标用户不存在。")
+                else:
+                    repo.set_user_greenhouses(s2, target_id, picked)
+                    repo.add_log(
+                        s2, "INFO", current_user, "用户管理",
+                        f"更新 {grant_target} 的大棚授权：{[next(g.name for g in ghs if g.id == i) for i in picked]}",
+                    )
+            st.success(f"已保存 {grant_target} 的授权大棚（{len(picked)} 个）。")
+            st.rerun()
+
 # ---------------- 修改角色 ----------------
 st.subheader("修改用户角色")
 with st.form("role_form"):

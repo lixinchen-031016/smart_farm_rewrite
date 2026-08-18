@@ -33,24 +33,33 @@ TASK_KEY = "pred_task"  # session_state 中后台任务句柄的 key
 
 
 def _fetch_series(metric: str, col: str, hours: int = 24 * 60) -> tuple[list, list]:
-    """拉取历史序列（对齐旧版 get_historical_data：取最近数据按时间升序）。"""
+    """拉取历史序列（对齐旧版 get_historical_data：取最近数据按时间升序，按当前大棚过滤）。"""
+    from smart_farm.app import greenhouse_context as gh_ctx
+
     since = datetime.now() - timedelta(hours=hours)
     with get_session() as s:
-        rows = repo.get_sensor_readings(s, metric, start=since, limit=5000)
+        rows = repo.get_sensor_readings(
+            s, metric, start=since, limit=5000, greenhouse_id=gh_ctx.current_greenhouse_id()
+        )
     values = [getattr(r, col) for r in rows]
     timestamps = [r.timestamp for r in rows]
     return values, timestamps
 
 
 def _fetch_multivariate() -> tuple[list, list, list, list]:
-    """拉取温度/湿度/光照最近 200 条（对齐旧版多变量数据源）。"""
+    """拉取温度/湿度/光照最近 200 条（对齐旧版多变量数据源，按当前大棚过滤）。"""
+    from smart_farm.app import greenhouse_context as gh_ctx
+
+    gh = gh_ctx.current_greenhouse_id()
     with get_session() as s:
-        temp = repo.get_sensor_readings(s, "air_temperature_humidity", limit=200)
+        temp = repo.get_sensor_readings(
+            s, "air_temperature_humidity", limit=200, greenhouse_id=gh
+        )
         temp = sorted(temp, key=lambda r: r.timestamp)
         ts = [r.timestamp for r in temp]
         temp_vals = [r.temperature for r in temp]
         humid_vals = [r.humidity for r in temp]
-        light_rows = repo.get_sensor_readings(s, "light_intensity", limit=200)
+        light_rows = repo.get_sensor_readings(s, "light_intensity", limit=200, greenhouse_id=gh)
         light_map = {r.timestamp: r.value for r in light_rows}
         light_vals = [light_map.get(t) for t in ts]
     return temp_vals, humid_vals, light_vals, ts

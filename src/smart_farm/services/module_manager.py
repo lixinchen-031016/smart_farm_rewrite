@@ -34,6 +34,8 @@ DEFAULT_MODULES: dict[str, dict] = {
                         "icon": "history", "admin_only": True, "enabled": True, "deps": ["data_prediction"]},
     "user_management": {"name": "用户管理", "desc": "用户与角色", "category": "管理",
                         "icon": "group", "admin_only": True, "enabled": True, "deps": []},
+    "device_management": {"name": "设备接入", "desc": "IoT 设备注册与 MQTT/HTTP/UDP 接入", "category": "管理",
+                          "icon": "sensors", "admin_only": True, "enabled": True, "deps": []},
     "system_monitoring": {"name": "系统监控", "desc": "数据量与 psutil", "category": "管理",
                           "icon": "monitor_heart", "admin_only": True, "enabled": True, "deps": []},
     "log_viewer": {"name": "操作日志", "desc": "审计日志", "category": "管理",
@@ -54,7 +56,7 @@ DEFAULT_MODULES: dict[str, dict] = {
 MODULE_ORDER = [
     "integrated_dashboard", "data_overview", "data_cleaning", "data_analysis",
     "advanced_analysis", "data_visualization", "data_prediction", "automated_decision",
-    "history_reports", "user_management", "system_monitoring", "log_viewer",
+    "history_reports", "user_management", "device_management", "system_monitoring", "log_viewer",
     "data_backup", "sync_databases", "use_instruction", "module_config", "debug_info",
 ]
 
@@ -70,6 +72,7 @@ MODULE_TO_PAGE = {
     "automated_decision": "decision",
     "history_reports": "history_reports",
     "user_management": "user_management",
+    "device_management": "devices",
     "system_monitoring": "system_monitoring",
     "log_viewer": "log_viewer",
     "data_backup": "backup_restore",

@@ -25,12 +25,40 @@ Base = declarative_base()
 
 
 class Greenhouse(Base):
-    """大棚（多租户预留）。"""
+    """大棚（多租户）。"""
 
     __tablename__ = "greenhouse"
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
     location = Column(String(255))
+
+
+class UserGreenhouse(Base):
+    """用户-大棚多对多关联（多棚多用户授权）。"""
+
+    __tablename__ = "user_greenhouse"
+    user_id = Column(Integer, ForeignKey("user.id"), primary_key=True)
+    greenhouse_id = Column(Integer, ForeignKey("greenhouse.id"), primary_key=True)
+    granted_at = Column(DateTime, nullable=False)
+
+
+class Device(Base):
+    """物联网接入设备（MQTT / HTTP / UDP 局域网直推）。
+
+    `device_key` 即设备凭证（API Key）：HTTP 走 Bearer/`X-Device-Key`，
+    MQTT 作为 username 之外的口令校验字段，UDP 放在 JSON payload 中。
+    """
+
+    __tablename__ = "device"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_key = Column(String(64), unique=True, nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    protocol = Column(String(20), nullable=False, default="http")  # mqtt / http / udp
+    greenhouse_id = Column(Integer, ForeignKey("greenhouse.id"), nullable=True, index=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    note = Column(String(255))
+    created_at = Column(DateTime, nullable=False)
+    last_seen_at = Column(DateTime, nullable=True)
 
 
 class AirTemperatureHumidity(Base):

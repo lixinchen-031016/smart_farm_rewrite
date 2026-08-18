@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from smart_farm.app import cache
+from smart_farm.app import greenhouse_context as gh_ctx
 from smart_farm.data import repositories as repo
 from smart_farm.data.database import get_session
 
@@ -63,7 +64,10 @@ with tab1:
         _, col = sub
         days = st.slider("时间范围（天）", 1, 90, 30, key="db_days")
         since = datetime.now() - timedelta(days=days)
-        df = cache.cached_sensor_df(metric, col, since.isoformat(), limit=5000)
+        df = cache.cached_sensor_df(
+            metric, col, since.isoformat(), limit=5000,
+            greenhouse_id=gh_ctx.current_greenhouse_id(),
+        )
         if df.empty:
             st.info("暂无数据，请先运行 `python -m smart_farm.data.seed` 生成演示数据。")
         else:

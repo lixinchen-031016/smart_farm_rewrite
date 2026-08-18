@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from smart_farm.app import cache
+from smart_farm.app import greenhouse_context as gh_ctx
 from smart_farm.data import repositories as repo
 from smart_farm.data.database import get_session
 from smart_farm.services import anomaly_service as an
@@ -81,20 +82,23 @@ def _get_prefs_ref() -> dict:
     return st.session_state[f"dashboard_pref_{username}"]
 
 
-@st.cache_data(ttl=30, max_entries=8)
-def _load_latest_cached() -> dict[str, float | None]:
-    """各指标最新值（缓存 30 秒——修复每 rerun 5 次独立查库的性能问题）。"""
+@st.cache_data(ttl=30, max_entries=16)
+def _load_latest_cached(greenhouse_id: int | None) -> dict[str, float | None]:
+    """各指标最新值（缓存 30 秒——修复每 rerun 5 次独立查库的性能问题）。
+
+    按当前大棚过滤（多租户隔离）。
+    """
     result: dict[str, float | None] = {}
     with get_session() as s:
         for metric, (_, col, _) in METRICS.items():
             db_metric = METRIC_DB[metric]
-            row = repo.get_latest_sensor_reading(s, db_metric)
+            row = repo.get_latest_sensor_reading(s, db_metric, greenhouse_id=greenhouse_id)
             result[metric] = round(getattr(row, col), 2) if row else None
     return result
 
 
 def _load_latest() -> dict[str, float | None]:
-    return _load_latest_cached()
+    return _load_latest_cached(gh_ctx.current_greenhouse_id())
 
 
 @st.cache_data(ttl=300, max_entries=8)
@@ -119,7 +123,10 @@ def _load_trend(metric: str, hours: int) -> pd.DataFrame:
     db_metric = METRIC_DB[metric]
     _, col, _ = METRICS[metric]
     since = datetime.now() - timedelta(hours=hours)
-    df = cache.cached_sensor_df(db_metric, col, since.isoformat(), limit=5000)
+    df = cache.cached_sensor_df(
+        db_metric, col, since.isoformat(), limit=5000,
+        greenhouse_id=gh_ctx.current_greenhouse_id(),
+    )
     return df.sort_values("timestamp")
 
 

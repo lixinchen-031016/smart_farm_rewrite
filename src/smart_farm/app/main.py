@@ -9,7 +9,7 @@
 
 import streamlit as st
 
-from smart_farm.app import auth_ui
+from smart_farm.app import auth_ui, greenhouse_context
 from smart_farm.services import module_manager as mm
 
 st.set_page_config(
@@ -43,10 +43,11 @@ if "role" in st.session_state:
         if st.session_state["role"] != "admin":
             st.warning("您的权限已变更，请刷新后继续操作。")
 
-# 侧边栏用户信息 + 退出（原生元素，无自定义 HTML）
+# 侧边栏用户信息 + 大棚切换 + 退出（原生元素，无自定义 HTML）
 with st.sidebar:
     role_label = "管理员" if st.session_state["role"] == "admin" else "普通用户"
     st.caption(f"当前用户：**{st.session_state['username']}**（{role_label}）")
+    greenhouse_context.render_greenhouse_selector()
     if st.button("退出登录", icon=":material/logout:"):
         st.session_state.clear()
         st.rerun()
@@ -67,6 +68,7 @@ ALL_PAGES: dict[str, st.Page] = {
     "decision": _page("decision", "自动化决策", ":material/psychology:"),
     "history_reports": _page("history_reports", "历史报告", ":material/history:"),
     "user_management": _page("user_management", "用户管理", ":material/group:"),
+    "devices": _page("devices", "设备接入", ":material/sensors:"),
     "log_viewer": _page("log_viewer", "操作日志", ":material/receipt_long:"),
     "system_monitoring": _page("system_monitoring", "系统监控", ":material/monitor_heart:"),
     "sync_databases": _page("sync_databases", "数据库同步", ":material/sync:"),

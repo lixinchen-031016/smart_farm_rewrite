@@ -18,6 +18,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from smart_farm.app import cache
+from smart_farm.app import greenhouse_context as gh_ctx
 from smart_farm.services import anomaly_service as an
 from smart_farm.services import cleaning_service as cs
 
@@ -72,7 +73,10 @@ def _load_source() -> tuple[pd.DataFrame | None, str | None]:
     st.session_state["src_metric"] = metric
     st.session_state["src_col"] = col
     since = datetime.now() - timedelta(days=90)
-    df = cache.cached_sensor_df(metric, col, since.isoformat(), limit=5000)
+    df = cache.cached_sensor_df(
+        metric, col, since.isoformat(), limit=5000,
+        greenhouse_id=gh_ctx.current_greenhouse_id(),
+    )
     if df.empty:
         st.warning("暂无数据，请先运行 `python -m smart_farm.data.seed` 生成演示数据。")
         return None, None

@@ -6,6 +6,7 @@
 
 import logging
 from functools import lru_cache
+from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -44,6 +45,17 @@ class Settings(BaseSettings):
     login_rate_limit_redis_url: str = "redis://localhost:6379/0"
     login_rate_limit_max_attempts: int = 10
     login_rate_limit_window_seconds: int = 30
+
+    # IoT 网关（python -m smart_farm.iot_gateway；协议可按 --http/--mqtt/--udp 开关）
+    iot_http_host: str = "0.0.0.0"
+    iot_http_port: int = 8600
+    iot_udp_host: str = "0.0.0.0"
+    iot_udp_port: int = 8601
+    mqtt_host: str = "localhost"
+    mqtt_port: int = 1883
+    mqtt_username: Optional[str] = None
+    mqtt_password: Optional[str] = None
+    mqtt_topic_prefix: str = "smart_farm/"
 
 
 @lru_cache

@@ -15,12 +15,14 @@ from sqlalchemy.orm import Session
 from smart_farm.data.models import (
     SENSOR_MODELS,
     AirTemperatureHumidity,
+    Device,
     Greenhouse,
     LightIntensity,
     OperationLog,
     SoilMoisture,
     SoilNutrient,
     User,
+    UserGreenhouse,
 )
 
 # ----------------------------- 传感器数据 -----------------------------
@@ -243,6 +245,158 @@ def delete_user(session: Session, user_id: int) -> bool:
 
 def list_greenhouses(session: Session) -> Sequence[Greenhouse]:
     return session.execute(select(Greenhouse).order_by(Greenhouse.id)).scalars().all()
+
+
+def get_greenhouse(session: Session, greenhouse_id: int) -> Optional[Greenhouse]:
+    return session.get(Greenhouse, greenhouse_id)
+
+
+def create_greenhouse(session: Session, name: str, location: Optional[str] = None) -> Greenhouse:
+    """新建大棚（同名不重复创建，幂等返回既有）。"""
+    existing = session.execute(select(Greenhouse).where(Greenhouse.name == name)).scalars().first()
+    if existing:
+        return existing
+    gh = Greenhouse(name=name, location=location)
+    session.add(gh)
+    session.flush()
+    return gh
+
+
+def update_greenhouse(session: Session, greenhouse_id: int, name: str, location: Optional[str]) -> bool:
+    gh = session.get(Greenhouse, greenhouse_id)
+    if not gh:
+        return False
+    gh.name = name
+    gh.location = location
+    return True
+
+
+def delete_greenhouse(session: Session, greenhouse_id: int) -> bool:
+    """删除大棚（连带清理用户关联与设备归属）。"""
+    gh = session.get(Greenhouse, greenhouse_id)
+    if not gh:
+        return False
+    session.query(UserGreenhouse).filter(UserGreenhouse.greenhouse_id == greenhouse_id).delete()
+    session.query(Device).filter(Device.greenhouse_id == greenhouse_id).update(
+        {"greenhouse_id": None}
+    )
+    session.delete(gh)
+    session.flush()
+    return True
+
+
+# ----------------------------- 用户-大棚授权（多租户） -----------------------------
+
+
+def list_greenhouse_ids_for_user(session: Session, user_id: int) -> list[int]:
+    """用户经关联表授权的大棚 id 列表（不含 User.greenhouse_id 兼容字段）。"""
+    rows = session.execute(
+        select(UserGreenhouse.greenhouse_id).where(UserGreenhouse.user_id == user_id)
+    ).scalars().all()
+    return sorted(rows)
+
+
+def list_greenhouses_for_user(session: Session, user: User) -> Sequence[Greenhouse]:
+    """用户可见大棚：关联表 ∪ 自身 greenhouse_id 字段（向后兼容旧数据）。
+
+    admin 可见全部大棚。
+    """
+    if user.role == "admin":
+        return list_greenhouses(session)
+    linked_ids = set(
+        session.execute(
+            select(UserGreenhouse.greenhouse_id).where(UserGreenhouse.user_id == user.id)
+        ).scalars().all()
+    )
+    if user.greenhouse_id is not None:
+        linked_ids.add(user.greenhouse_id)
+    if not linked_ids:
+        return []
+    stmt = select(Greenhouse).where(Greenhouse.id.in_(linked_ids)).order_by(Greenhouse.id)
+    return session.execute(stmt).scalars().all()
+
+
+def set_user_greenhouses(session: Session, user_id: int, greenhouse_ids: Sequence[int]) -> None:
+    """整体替换用户的授权大棚集合（多选保存语义）。"""
+    session.query(UserGreenhouse).filter(UserGreenhouse.user_id == user_id).delete()
+    for gid in greenhouse_ids:
+        session.add(UserGreenhouse(user_id=user_id, greenhouse_id=gid, granted_at=datetime.now()))
+    session.flush()
+
+
+def user_can_access_greenhouse(session: Session, user: User, greenhouse_id: Optional[int]) -> bool:
+    """鉴权：admin 全量可见；普通用户按授权集合判断（greenhouse_id 为 None 表示未隔离）。"""
+    if user.role == "admin":
+        return True
+    if greenhouse_id is None:
+        return True
+    if user.greenhouse_id == greenhouse_id:
+        return True
+    link = session.execute(
+        select(UserGreenhouse).where(
+            UserGreenhouse.user_id == user.id, UserGreenhouse.greenhouse_id == greenhouse_id
+        )
+    ).scalars().first()
+    return link is not None
+
+
+# ----------------------------- IoT 设备 -----------------------------
+
+
+def get_device_by_key(session: Session, device_key: str) -> Optional[Device]:
+    return session.execute(select(Device).where(Device.device_key == device_key)).scalars().first()
+
+
+def list_devices(session: Session, greenhouse_id: Optional[int] = None) -> Sequence[Device]:
+    stmt = select(Device).order_by(Device.id)
+    if greenhouse_id is not None:
+        stmt = stmt.where(Device.greenhouse_id == greenhouse_id)
+    return session.execute(stmt).scalars().all()
+
+
+def create_device(
+    session: Session,
+    name: str,
+    protocol: str,
+    device_key: str,
+    greenhouse_id: Optional[int] = None,
+    note: Optional[str] = None,
+) -> Device:
+    device = Device(
+        device_key=device_key,
+        name=name,
+        protocol=protocol,
+        greenhouse_id=greenhouse_id,
+        enabled=True,
+        note=note,
+        created_at=datetime.now(),
+    )
+    session.add(device)
+    session.flush()
+    return device
+
+
+def set_device_enabled(session: Session, device_id: int, enabled: bool) -> bool:
+    device = session.get(Device, device_id)
+    if not device:
+        return False
+    device.enabled = enabled
+    return True
+
+
+def touch_device(session: Session, device_id: int) -> None:
+    """更新设备最近上报时间（数据接入时调用）。"""
+    device = session.get(Device, device_id)
+    if device:
+        device.last_seen_at = datetime.now()
+
+
+def delete_device(session: Session, device_id: int) -> bool:
+    device = session.get(Device, device_id)
+    if not device:
+        return False
+    session.delete(device)
+    return True
 
 
 # ----------------------------- 操作日志 -----------------------------

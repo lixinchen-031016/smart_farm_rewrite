@@ -9,6 +9,7 @@ import plotly.express as px
 import streamlit as st
 
 from smart_farm.app import cache
+from smart_farm.app import greenhouse_context as gh_ctx
 from smart_farm.services import analysis_service as az
 
 METRICS = {
@@ -22,14 +23,15 @@ METRICS = {
 def _load_df(metric: str):
     since = datetime.now() - timedelta(days=30)
     iso = since.isoformat()
+    gh = gh_ctx.current_greenhouse_id()
     if metric == "air_temperature_humidity":
-        d1 = cache.cached_sensor_df(metric, "temperature", iso, limit=3000)
-        d2 = cache.cached_sensor_df(metric, "humidity", iso, limit=3000)
+        d1 = cache.cached_sensor_df(metric, "temperature", iso, limit=3000, greenhouse_id=gh)
+        d2 = cache.cached_sensor_df(metric, "humidity", iso, limit=3000, greenhouse_id=gh)
         df = d1.rename(columns={"value": "temperature"}).merge(
             d2.rename(columns={"value": "humidity"}), on="timestamp"
         )
         return df
-    df = cache.cached_sensor_df(metric, "value", iso, limit=3000)
+    df = cache.cached_sensor_df(metric, "value", iso, limit=3000, greenhouse_id=gh)
     return df.rename(columns={"value": metric})
 
 

@@ -13,6 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from smart_farm.app import cache
+from smart_farm.app import greenhouse_context as gh_ctx
 from smart_farm.services import visualization_service as vs
 
 METRICS = {
@@ -26,7 +27,10 @@ METRICS = {
 def _fetch(metric: str, cols: list[str], start: datetime, end: datetime, limit: int = 4000) -> pd.DataFrame:
     frames = []
     for c in cols:
-        d = cache.cached_sensor_df(metric, c, start.isoformat(), limit=limit)
+        d = cache.cached_sensor_df(
+            metric, c, start.isoformat(), limit=limit,
+            greenhouse_id=gh_ctx.current_greenhouse_id(),
+        )
         frames.append(d.rename(columns={"value": c}))
     df = frames[0]
     for d in frames[1:]:
