@@ -112,6 +112,109 @@ def create_multi_subplot_chart(
     return fig
 
 
+def create_time_animation_chart(
+    df: pd.DataFrame,
+    time_column: str,
+    value_column: str,
+    min_frames: int = 15,
+    max_frames: int = 60,
+    title: Optional[str] = None,
+) -> go.Figure:
+    """时间动画图：按粒度聚合后逐帧累积回放趋势（播放/暂停按钮 + 滑块）。
+
+    自动从日 → 12 小时 → 小时 → 30 分钟 → 10 分钟中选择聚合粒度，
+    使帧数落在 [min_frames, max_frames]；数据点过少时直接逐点播放。
+    """
+    if time_column not in df.columns or value_column not in df.columns:
+        raise ValueError(f"时间动画需要有效的时间列与数值列：{time_column} / {value_column}")
+    s = df[[time_column, value_column]].dropna().copy()
+    if s.empty:
+        raise ValueError("所选数据为空，无法生成时间动画。")
+    s[time_column] = pd.to_datetime(s[time_column])
+    s = s.set_index(time_column)[value_column].sort_index()
+
+    freq = None
+    if len(s) > max_frames:
+        for f in ("D", "12h", "h", "30min", "10min"):
+            agg = s.resample(f).mean().dropna()
+            freq = f
+            if len(agg) >= min_frames:
+                break
+    else:
+        agg = s
+
+    if len(agg) > max_frames:  # 聚合后仍过多则按步长抽稀
+        step = int(np.ceil(len(agg) / max_frames))
+        agg = agg.iloc[::step]
+    if len(agg) < 2:
+        raise ValueError("时间跨度不足以生成动画，请扩大时间范围或降低粒度。")
+
+    fmt = "%m-%d" if freq in (None, "D") else "%m-%d %H:%M"
+    labels = [t.strftime(fmt) for t in agg.index]
+    frames = [
+        go.Frame(
+            data=[go.Scatter(x=agg.index[:i], y=agg.iloc[:i], mode="lines+markers")],
+            name=labels[i - 1],
+        )
+        for i in range(1, len(agg) + 1)
+    ]
+
+    fig = go.Figure(
+        data=[
+            go.Scatter(
+                x=agg.index[:1], y=agg.iloc[:1], mode="lines+markers",
+                line={"color": "#185FA5"},
+            )
+        ],
+        frames=frames,
+    )
+    fig.update_layout(
+        title=title or f"{value_column} 时间动画（逐帧累积）",
+        xaxis_title=time_column,
+        yaxis_title=value_column,
+        template="plotly_white",
+        height=460,
+        updatemenus=[
+            {
+                "type": "buttons",
+                "direction": "left",
+                "pad": {"r": 10, "t": 30},
+                "x": 0.1,
+                "y": 0,
+                "buttons": [
+                    {
+                        "label": "播放",
+                        "method": "animate",
+                        "args": [None, {"frame": {"duration": 300, "redraw": True}, "fromcurrent": True}],
+                    },
+                    {
+                        "label": "暂停",
+                        "method": "animate",
+                        "args": [[None], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
+                    },
+                ],
+            }
+        ],
+        sliders=[
+            {
+                "active": 0,
+                "y": 0,
+                "x": 0.3,
+                "len": 0.65,
+                "steps": [
+                    {
+                        "label": lbl,
+                        "method": "animate",
+                        "args": [[lbl], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
+                    }
+                    for lbl in labels
+                ],
+            }
+        ],
+    )
+    return fig
+
+
 def interpret_chart(chart_type: str, df: pd.DataFrame, **params) -> str:
     """图表解读文案（对齐旧版 data_visualization 的每图解读）。"""
     try:

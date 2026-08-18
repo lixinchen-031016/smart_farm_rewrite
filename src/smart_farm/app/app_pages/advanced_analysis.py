@@ -83,6 +83,25 @@ elif "moist" in lower or "土" in agg_col:
 
 st.subheader("可视化")
 fig = px.bar(result, x=group_col, y=result.columns[1],
-             title=f"{agg_col} 按{group_col}{agg_func}")
+             title=f"{agg_col} 按星期{agg_func}")
 fig.update_layout(height=400)
 st.plotly_chart(fig, width="stretch")
+
+st.subheader("交叉热力图（星期 × 小时，本页独有）")
+WEEKDAY_NAMES = {0: "周一", 1: "周二", 2: "周三", 3: "周四", 4: "周五", 5: "周六", 6: "周日"}
+try:
+    pivot = az.cross_pivot(work, "星期", "小时", agg_col, agg_func)
+    show = pivot.rename(index=WEEKDAY_NAMES)
+    fig_heat = px.imshow(
+        show, text_auto=True, aspect="auto",
+        color_continuous_scale="RdYlBu_r",
+        title=f"{agg_col} {agg_func}：星期 × 小时",
+        labels={"x": "小时", "y": "星期", "color": agg_col},
+    )
+    fig_heat.update_layout(height=460)
+    st.plotly_chart(fig_heat, width="stretch")
+    insight = az.cross_pivot_insight(pivot, agg_col, row_names=WEEKDAY_NAMES)
+    if insight:
+        st.caption(insight)
+except ValueError as e:
+    st.error(str(e))

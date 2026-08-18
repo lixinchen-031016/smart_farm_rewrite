@@ -188,3 +188,64 @@ def test_multivariate_dropna_insufficient():
         assert False, "应抛出 ValueError"
     except ValueError as e:
         assert "有效样本不足" in str(e)
+
+
+# ----------------------------- 网格搜索 / 短期 / 残差混合预测 -----------------------------
+
+
+def test_grid_search_sarima_params():
+    """网格搜索返回候选集中 AIC 最优参数。"""
+    pytest.importorskip("statsmodels")
+    values, ts = _series3h(n=80)
+    series = pd.Series(values, index=pd.DatetimeIndex(ts))
+    grid = [
+        ((1, 0, 0), (1, 0, 0, 8)),
+        ((0, 1, 1), (1, 0, 0, 8)),
+    ]
+    order, seasonal, aic = ps.grid_search_sarima_params(series, param_grid=grid, maxiter=50)
+    assert (order, seasonal) in grid
+    assert np.isfinite(aic)
+
+
+def test_grid_search_sarima_all_fail_raises():
+    pytest.importorskip("statsmodels")
+    # 显式空网格（不回退默认候选）→ 全部候选失败路径
+    series = pd.Series([1.0, 2.0, 3.0], index=pd.date_range("2026-01-01", periods=3, freq="h"))
+    with pytest.raises(RuntimeError, match="网格搜索失败"):
+        ps.grid_search_sarima_params(series, param_grid=[], maxiter=5)
+
+
+def test_short_term_forecast_structure():
+    """短期预测：输出 hours/3 个点，必有 yhat 与置信带。"""
+    values, ts = _series3h(n=100)
+    res = ps.short_term_forecast(values, ts, hours=12)
+    assert len(res.forecast) == 4
+    assert res.method in ("prophet-short", "naive-short")
+    assert set(res.forecast.columns) >= {"ds", "yhat", "yhat_lower", "yhat_upper"}
+    assert (res.forecast["yhat_lower"] <= res.forecast["yhat"]).all()
+
+
+def test_short_term_forecast_fallback():
+    """历史不足 2 桶时回退 naive，不崩溃。"""
+    res = ps.short_term_forecast([5.0], [pd.Timestamp("2026-01-01")], hours=6)
+    assert res.method.startswith("naive")
+
+
+def test_residual_hybrid_forecast():
+    """残差分解混合：两阶段 SARIMA→Prophet 残差修正。"""
+    pytest.importorskip("statsmodels")
+    pytest.importorskip("prophet")
+    values, ts = _series3h(n=120)
+    res = ps.residual_hybrid_forecast(values, ts, prediction_days=2)
+    assert len(res.forecast) == 2 * ps.POINTS_PER_DAY
+    assert set(res.forecast.columns) >= {"ds", "yhat", "yhat_lower", "yhat_upper"}
+    assert res.method.startswith("residual") or "hybrid" in res.method
+
+
+def test_hybrid_forecast_grid_search_toggle():
+    """use_grid_search=True 时走网格搜索分支仍产出合法结果。"""
+    pytest.importorskip("statsmodels")
+    values, ts = _series3h(n=80)
+    res = ps.hybrid_forecast(values, ts, prediction_days=1, use_grid_search=True)
+    assert len(res.forecast) == ps.POINTS_PER_DAY
+    assert set(res.forecast.columns) >= {"ds", "yhat"}

@@ -220,6 +220,129 @@ def prepare_series(values: Sequence[float], timestamps: Sequence[pd.Timestamp]) 
     return df
 
 
+SARIMA_PARAM_GRID: tuple[tuple[tuple[int, int, int], tuple[int, int, int, int]], ...] = (
+    ((1, 1, 1), (1, 1, 1, 24)),
+    ((2, 1, 1), (1, 1, 1, 24)),
+    ((1, 1, 2), (1, 1, 1, 24)),
+    ((1, 1, 1), (1, 1, 2, 24)),
+    ((2, 1, 2), (1, 1, 1, 24)),
+)
+
+
+def grid_search_sarima_params(
+    series: pd.Series,
+    param_grid: Optional[
+        Sequence[tuple[tuple[int, int, int], tuple[int, int, int, int]]]
+    ] = None,
+    maxiter: int = 100,
+) -> tuple[tuple[int, int, int], tuple[int, int, int, int], float]:
+    """SARIMA 参数网格搜索（按 AIC 选优，对齐旧版 grid_search_sarima_params）。
+
+    修复：此前 `hybrid_forecast` 的 `use_grid_search` 参数存在但从未生效（死参数），
+    SARIMA 固定 (1,1,1)(1,1,1,24)。现在搜索真正执行。
+
+    Returns:
+        (best_order, best_seasonal_order, best_aic)
+    Raises:
+        RuntimeError: statsmodels 未安装或全部候选拟合失败。
+    """
+    from statsmodels.tsa.statespace.sarimax import SARIMAX  # type: ignore
+
+    best: Optional[tuple[tuple[int, int, int], tuple[int, int, int, int], float]] = None
+    for order, seasonal in (param_grid if param_grid is not None else SARIMA_PARAM_GRID):
+        try:
+            fit = SARIMAX(
+                series,
+                order=order,
+                seasonal_order=seasonal,
+                enforce_stationarity=False,
+                enforce_invertibility=False,
+            ).fit(disp=False, maxiter=maxiter)
+            aic = float(fit.aic)
+            if np.isfinite(aic) and (best is None or aic < best[2]):
+                best = (order, seasonal, aic)
+        except Exception:  # noqa: BLE001 单个候选失败跳过，不影响其余
+            continue
+    if best is None:
+        raise RuntimeError("SARIMA 网格搜索失败：全部候选参数均无法拟合。")
+    return best
+
+
+def _rmse(actual: np.ndarray, pred: np.ndarray) -> float:
+    return float(np.sqrt(np.mean((actual - pred) ** 2)))
+
+
+def _mae(actual: np.ndarray, pred: np.ndarray) -> float:
+    return float(np.mean(np.abs(actual - pred)))
+
+
+def _mape(actual: np.ndarray, pred: np.ndarray) -> float:
+    denom = np.where(np.abs(actual) < 1e-9, 1e-9, actual)
+    return float(np.mean(np.abs((actual - pred) / denom)) * 100)
+
+
+def short_term_forecast(
+    values: Sequence[float],
+    timestamps: Sequence[pd.Timestamp],
+    hours: int = 24,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> ForecastResult:
+    """短期预测线（仪表板趋势叠加，对齐旧库 Prophet 短期预测叠加）。
+
+    3H 采样 + Prophet 外推 hours/3 个点；Prophet 不可用/拟合失败时回退
+    末值平推（naive-short），保证叠加线总能渲染。
+    """
+    points = max(1, int(hours) // 3)
+    prepared = prepare_series(values, timestamps)
+    if len(prepared) < 2:
+        return naive_forecast(values, timestamps, prediction_days=1)
+
+    hist = prepared["y"].astype(float)
+    last_date = prepared.index[-1]
+    dates = pd.date_range(
+        start=last_date + pd.Timedelta(hours=3), periods=points, freq=SAMPLING_FREQ
+    )
+    _emit(progress_callback, 0.5, "Prophet 短期拟合中")
+    try:
+        from prophet import Prophet  # type: ignore
+
+        fit_df = pd.DataFrame({"ds": prepared.index, "y": hist.values})
+        m = Prophet(
+            yearly_seasonality=False,
+            weekly_seasonality=False,
+            daily_seasonality=True,
+            seasonality_mode="additive",
+        )
+        m.fit(fit_df)
+        yhat = m.predict(pd.DataFrame({"ds": dates}))["yhat"].to_numpy()
+        method = "prophet-short"
+        explanation = "Prophet 短期预测（3H 步长，日季节性）。"
+    except Exception:  # noqa: BLE001 回退末值平推
+        yhat = np.full(points, float(hist.iloc[-1]))
+        method = "naive-short"
+        explanation = "Prophet 短期预测不可用，回退末值平推。"
+
+    band = float(hist.std()) if len(hist) > 1 else 0.0
+    fc = pd.DataFrame(
+        {
+            "ds": dates,
+            "yhat": yhat,
+            "yhat_lower": yhat - 1.96 * band,
+            "yhat_upper": yhat + 1.96 * band,
+        }
+    )
+    _emit(progress_callback, 1.0, "完成")
+    hist_df = prepared.reset_index()
+    if "ds" not in hist_df.columns:
+        hist_df = hist_df.rename(columns={"index": "ds"})
+    return ForecastResult(
+        history=hist_df,
+        forecast=fc,
+        method=method,
+        explanation=explanation,
+    )
+
+
 def hybrid_forecast(
     values: Sequence[float],
     timestamps: Sequence[pd.Timestamp],
@@ -254,15 +377,24 @@ def hybrid_forecast(
     sarima_rmse = prophet_rmse = float("inf")
 
     # ---- SARIMA 拟合 ----
-    _emit(progress_callback, 0.2, "SARIMA 拟合中")
+    _emit(progress_callback, 0.15, "SARIMA 参数网格搜索中" if use_grid_search else "SARIMA 拟合中")
     try:
         from statsmodels.tsa.statespace.sarimax import SARIMAX  # type: ignore
 
         hist = prepared["y"].astype(float)
+        order, seasonal_order = (1, 1, 1), (1, 1, 1, 24)
+        if use_grid_search:
+            # 激活网格搜索（此前 use_grid_search 为死参数，从未生效）
+            try:
+                gs_order, gs_seasonal, _aic = grid_search_sarima_params(hist)
+                order, seasonal_order = gs_order, gs_seasonal
+            except Exception:  # noqa: BLE001 搜索失败回退默认参数
+                pass
+            _emit(progress_callback, 0.2, f"SARIMA 拟合中（最优参数 {order}×{seasonal_order}）")
         model = SARIMAX(
             hist,
-            order=(1, 1, 1),
-            seasonal_order=(1, 1, 1, 24),
+            order=order,
+            seasonal_order=seasonal_order,
             enforce_stationarity=False,
             enforce_invertibility=False,
         )
@@ -358,6 +490,162 @@ def hybrid_forecast(
         forecast=fc,
         method=method_name,
         rmse=rmse if np.isfinite(rmse) else None,
+        explanation=explanation,
+    )
+
+
+def residual_hybrid_forecast(
+    values: Sequence[float],
+    timestamps: Sequence[pd.Timestamp],
+    prediction_days: int = 7,
+    changepoint_prior_scale: float = 0.05,
+    seasonality_prior_scale: float = 10.0,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> ForecastResult:
+    """残差分解混合预测（对齐旧库 HybridPredictor 两阶段法，补齐复刻缺口）。
+
+    阶段一：SARIMA 捕获线性趋势与季节性；
+    阶段二：Prophet 在 SARIMA 残差上学习非线性模式；
+    融合：最终预测 = SARIMA 外推 + Prophet 残差外推。
+    评估：最后 20% 样本上对比混合 vs 纯 SARIMA（RMSE/MAE/MAPE + 改进率）。
+
+    任一阶段失败时逐级回退：`hybrid_forecast`（权重融合）→ 单模型 → naive。
+    """
+    _emit(progress_callback, 0.05, "数据预处理")
+    prepared = prepare_series(values, timestamps)
+    if len(prepared) < 24:
+        _emit(progress_callback, 0.5, "样本不足，回退权重融合")
+        return hybrid_forecast(
+            values, timestamps, prediction_days,
+            changepoint_prior_scale=changepoint_prior_scale,
+            seasonality_prior_scale=seasonality_prior_scale,
+            progress_callback=progress_callback,
+        )
+
+    hist = prepared["y"].astype(float)
+    total_points = prediction_days * POINTS_PER_DAY
+    last_date = prepared.index[-1]
+    forecast_dates = pd.date_range(
+        start=last_date + pd.Timedelta(hours=3), periods=total_points, freq=SAMPLING_FREQ
+    )
+
+    def _fallback_weight_fusion(reason: str) -> ForecastResult:
+        _emit(progress_callback, 0.6, f"{reason}，回退权重融合")
+        res = hybrid_forecast(
+            values, timestamps, prediction_days,
+            changepoint_prior_scale=changepoint_prior_scale,
+            seasonality_prior_scale=seasonality_prior_scale,
+            progress_callback=progress_callback,
+        )
+        res.explanation = f"（{reason}，已回退权重融合）{res.explanation}"
+        return res
+
+    # ---- 阶段一：SARIMA 拟合 ----
+    _emit(progress_callback, 0.2, "阶段一：SARIMA 拟合")
+    try:
+        from statsmodels.tsa.statespace.sarimax import SARIMAX  # type: ignore
+
+        fit = SARIMAX(
+            hist,
+            order=(1, 1, 1),
+            seasonal_order=(1, 1, 1, 24),
+            enforce_stationarity=False,
+            enforce_invertibility=False,
+        ).fit(disp=False, maxiter=200)
+        fitted = fit.fittedvalues
+        sarima_future = np.asarray(fit.forecast(steps=total_points), dtype=float)
+    except Exception:  # noqa: BLE001
+        return _fallback_weight_fusion("SARIMA 拟合失败")
+
+    mask = fitted.notna() & hist.notna()
+    resid = (hist - fitted)[mask]
+    actual_hist = hist[mask].to_numpy()
+    fitted_hist = fitted[mask].to_numpy()
+
+    if len(resid) < 10 or float(resid.std()) < 1e-9:
+        # 残差无信息：SARIMA 已充分刻画序列，直接用纯 SARIMA 结果
+        band = float(hist.std()) if len(hist) > 1 else 0.0
+        fc = pd.DataFrame(
+            {
+                "ds": forecast_dates,
+                "yhat": sarima_future,
+                "yhat_lower": sarima_future - 1.96 * band,
+                "yhat_upper": sarima_future + 1.96 * band,
+            }
+        )
+        hist_df = prepared.reset_index()
+        if "ds" not in hist_df.columns:
+            hist_df = hist_df.rename(columns={"index": "ds"})
+        _emit(progress_callback, 1.0, "完成")
+        return ForecastResult(
+            history=hist_df,
+            forecast=fc,
+            method="sarima(残差无信息)",
+            rmse=_rmse(actual_hist, fitted_hist),
+            explanation="SARIMA 残差近似白噪声，非线性增益有限，已回退纯 SARIMA。",
+        )
+
+    # ---- 阶段二：Prophet 学习残差 ----
+    _emit(progress_callback, 0.55, "阶段二：Prophet 残差学习")
+    try:
+        from prophet import Prophet  # type: ignore
+
+        rdf = pd.DataFrame({"ds": resid.index, "y": resid.values})
+        m = Prophet(
+            yearly_seasonality=False,
+            weekly_seasonality=False,
+            daily_seasonality=True,
+            seasonality_mode="additive",
+            changepoint_prior_scale=changepoint_prior_scale,
+            seasonality_prior_scale=seasonality_prior_scale,
+        )
+        m.fit(rdf)
+        resid_future = m.predict(pd.DataFrame({"ds": forecast_dates}))["yhat"].to_numpy()
+        resid_fitted = m.predict(rdf[["ds"]])["yhat"].to_numpy()
+    except Exception:  # noqa: BLE001
+        return _fallback_weight_fusion("Prophet 残差学习失败")
+
+    # ---- 融合与评估（最后 20% 样本：混合 vs 纯 SARIMA） ----
+    _emit(progress_callback, 0.85, "融合与评估")
+    combined_future = sarima_future + resid_future
+    combined_fitted = fitted_hist + resid_fitted
+
+    n_eval = max(1, len(actual_hist) // 5)
+    a_eval, h_eval, s_eval = (
+        actual_hist[-n_eval:],
+        combined_fitted[-n_eval:],
+        fitted_hist[-n_eval:],
+    )
+    rmse_h, rmse_s = _rmse(a_eval, h_eval), _rmse(a_eval, s_eval)
+    mae_h, mae_s = _mae(a_eval, h_eval), _mae(a_eval, s_eval)
+    mape_h, mape_s = _mape(a_eval, h_eval), _mape(a_eval, s_eval)
+    improvement = (rmse_s - rmse_h) / rmse_s * 100 if rmse_s > 1e-9 else 0.0
+    verdict = "混合模型优于纯 SARIMA" if improvement > 0 else "未优于纯 SARIMA（增益有限）"
+
+    band = float(hist.std()) if len(hist) > 1 else 0.0
+    fc = pd.DataFrame(
+        {
+            "ds": forecast_dates,
+            "yhat": combined_future,
+            "yhat_lower": combined_future - 1.96 * band,
+            "yhat_upper": combined_future + 1.96 * band,
+        }
+    )
+    hist_df = prepared.reset_index()
+    if "ds" not in hist_df.columns:
+        hist_df = hist_df.rename(columns={"index": "ds"})
+    _emit(progress_callback, 1.0, "完成")
+    explanation = (
+        f"残差分解两阶段：SARIMA 捕获线性趋势/季节性，Prophet 学习残差非线性后叠加。"
+        f"末 20% 样本评估：混合 RMSE={rmse_h:.4f} vs 纯 SARIMA {rmse_s:.4f}"
+        f"（改进 {improvement:+.1f}%，{verdict}）；MAE {mae_h:.4f} vs {mae_s:.4f}，"
+        f"MAPE {mape_h:.2f}% vs {mape_s:.2f}%。"
+    )
+    return ForecastResult(
+        history=hist_df,
+        forecast=fc,
+        method="hybrid-residual(sarima+prophet)",
+        rmse=rmse_h,
         explanation=explanation,
     )
 

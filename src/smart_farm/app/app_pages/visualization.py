@@ -105,6 +105,13 @@ with tab1:
                              color_column=color_column, column=column, height=480)
         st.plotly_chart(fig, width="stretch")
         st.caption(vs.interpret_chart(chart, df, x_column=x_column, y_column=y_column, column=column))
+        st.download_button(
+            "导出图表 JSON",
+            data=fig.to_json(),
+            file_name=f"{metric}_{chart}.json",
+            mime="application/json",
+            icon=":material/download:",
+        )
     except ValueError as e:
         st.error(str(e))
 
@@ -133,3 +140,23 @@ with tab2:
             st.plotly_chart(fig, width="stretch")
         else:
             st.info("请至少选择两个变量生成多子图。")
+
+        st.subheader("时间动画")
+        if "timestamp" not in df.columns or not numeric_cols:
+            st.info("需要时间戳列与数值列才能生成时间动画。")
+        else:
+            anim_col = st.selectbox("动画数值列", numeric_cols, key="anim_col")
+            try:
+                fig_anim = vs.create_time_animation_chart(df, "timestamp", anim_col)
+                st.plotly_chart(fig_anim, width="stretch")
+                st.caption("自动按日/小时聚合，点击「播放」逐帧回放趋势演变；可拖动滑块跳转。")
+                st.download_button(
+                    "导出动画图 JSON",
+                    data=fig_anim.to_json(),
+                    file_name=f"{metric}_{anim_col}_animation.json",
+                    mime="application/json",
+                    icon=":material/download:",
+                    key="dl_anim",
+                )
+            except ValueError as e:
+                st.error(str(e))

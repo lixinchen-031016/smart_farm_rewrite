@@ -3,19 +3,22 @@
 重写要点（对照旧版安全缺陷）：
 - 密钥从配置读取，绝不在代码/compose 中硬编码弱口令。
 - 登录态由调用方（UI）存入 session_state / Cookie；JWT **不放入 URL query_params**。
-- 登录失败限流：当前为进程内计数（便于演示），结构上可平滑替换为 Redis/DB 实现。
+- 登录失败限流：可插拔后端（默认进程内存，可配置 Redis 以支持多 worker）。
 """
 
+import logging
 import re
 import threading
+import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional, Protocol
 
 import bcrypt
 import jwt
 
 from smart_farm.config import get_settings
 
+logger = logging.getLogger(__name__)
 _settings = get_settings()
 
 
@@ -160,28 +163,35 @@ def decode_access_token(token: str) -> Optional[dict]:
         return None
 
 
-# ----------------------------- 登录限流 -----------------------------
+# ----------------------------- 登录限流（可插拔后端） -----------------------------
 
 
-class LoginLimiter:
-    """登录失败限流（对齐旧库：10 次失败 / 30 秒锁定）。
+class RateLimitBackend(Protocol):
+    """限流后端协议：实现本协议即可替换（内存 / Redis / DB ...）。"""
 
-    当前为进程内内存实现（演示用）。生产环境应替换为 Redis / DB 后端，
-    以保证多 worker、重启后仍生效（旧版内存字典在重启后失效）。
-    """
+    def recent_failure_count(self, key: str) -> int:
+        """清理过期记录并返回窗口内的失败次数。"""
+        ...
 
-    def __init__(self, max_attempts: int = 10, window_seconds: int = 30):
-        self.max_attempts = max_attempts
+    def register_failure(self, key: str) -> None: ...
+
+    def reset(self, key: str) -> None: ...
+
+
+class InMemoryRateLimitBackend:
+    """进程内内存后端（单 worker 演示用；重启失效）。"""
+
+    def __init__(self, window_seconds: int = 30):
         self.window = timedelta(seconds=window_seconds)
         self._store: dict[str, list[datetime]] = {}
         self._lock = threading.Lock()
 
-    def is_blocked(self, key: str) -> bool:
+    def recent_failure_count(self, key: str) -> int:
         with self._lock:
             attempts = self._store.get(key, [])
             attempts = [t for t in attempts if datetime.now() - t < self.window]
             self._store[key] = attempts
-            return len(attempts) >= self.max_attempts
+            return len(attempts)
 
     def register_failure(self, key: str) -> None:
         with self._lock:
@@ -192,4 +202,86 @@ class LoginLimiter:
             self._store.pop(key, None)
 
 
-limiter = LoginLimiter()
+class RedisRateLimitBackend:
+    """Redis 后端（多 worker / 多进程共享，生产推荐；需 `uv pip install redis`）。
+
+    以 sorted set 记录窗口内每次失败的时间戳，score 即时间。
+    """
+
+    def __init__(self, client: Any, window_seconds: int = 30, prefix: str = "login_rate:"):
+        self.client = client
+        self.window = window_seconds
+        self.prefix = prefix
+
+    @classmethod
+    def from_url(cls, url: str, window_seconds: int = 30) -> "RedisRateLimitBackend":
+        import redis  # 可选依赖，懒加载
+
+        return cls(redis.Redis.from_url(url), window_seconds=window_seconds)
+
+    def _key(self, key: str) -> str:
+        return f"{self.prefix}{key}"
+
+    def _prune(self, key: str) -> None:
+        now = time.time()
+        self.client.zremrangebyscore(self._key(key), 0, now - self.window)
+        self.client.expire(self._key(key), self.window * 2)
+
+    def recent_failure_count(self, key: str) -> int:
+        self._prune(key)
+        return int(self.client.zcard(self._key(key)))
+
+    def register_failure(self, key: str) -> None:
+        now = time.time()
+        self.client.zadd(self._key(key), {f"{now:.6f}": now})
+        self._prune(key)
+
+    def reset(self, key: str) -> None:
+        self.client.delete(self._key(key))
+
+
+class LoginLimiter:
+    """登录失败限流门面（对齐旧库：10 次失败 / 30 秒锁定）。
+
+    委托可插拔后端（`RateLimitBackend` 协议）：
+    - memory（默认）：进程内，单 worker 演示。
+    - redis：多 worker / 重启后仍生效，经 `LOGIN_RATE_LIMIT_BACKEND=redis` 启用。
+    """
+
+    def __init__(
+        self,
+        max_attempts: int = 10,
+        window_seconds: int = 30,
+        backend: Optional[RateLimitBackend] = None,
+    ):
+        self.max_attempts = max_attempts
+        self.window = timedelta(seconds=window_seconds)
+        self.backend = backend or InMemoryRateLimitBackend(window_seconds)
+
+    def is_blocked(self, key: str) -> bool:
+        return self.backend.recent_failure_count(key) >= self.max_attempts
+
+    def register_failure(self, key: str) -> None:
+        self.backend.register_failure(key)
+
+    def reset(self, key: str) -> None:
+        self.backend.reset(key)
+
+
+def _build_default_limiter() -> LoginLimiter:
+    """按配置构建限流器：memory（默认）/ redis；redis 不可用时回退内存并告警。"""
+    backend_name = _settings.login_rate_limit_backend.lower()
+    window = _settings.login_rate_limit_window_seconds
+    attempts = _settings.login_rate_limit_max_attempts
+    if backend_name == "redis":
+        try:
+            backend: RateLimitBackend = RedisRateLimitBackend.from_url(
+                _settings.login_rate_limit_redis_url, window_seconds=window
+            )
+            return LoginLimiter(attempts, window, backend=backend)
+        except ImportError:
+            logger.warning("redis 未安装，登录限流回退进程内内存后端（单 worker）。")
+    return LoginLimiter(attempts, window)
+
+
+limiter = _build_default_limiter()

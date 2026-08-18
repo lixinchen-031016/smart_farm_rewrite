@@ -27,7 +27,7 @@ METRIC_MAP = {
     "光照强度": ("light_intensity", "value"),
 }
 
-MODEL_OPTIONS = ["Prophet+SARIMA(推荐)", "纯 Prophet"]
+MODEL_OPTIONS = ["Prophet+SARIMA(推荐)", "纯 Prophet", "残差分解混合(进阶)"]
 
 TASK_KEY = "pred_task"  # session_state 中后台任务句柄的 key
 
@@ -92,6 +92,7 @@ def _compute_univariate(
     days: int,
     cp: float,
     season: float,
+    use_grid_search: bool = True,
     progress_callback=None,
 ) -> dict:
     """单变量预测计算（后台线程执行）。返回结果字典供主线程渲染。"""
@@ -106,9 +107,17 @@ def _compute_univariate(
             changepoint_prior_scale=cp, seasonality_prior_scale=season,
             progress_callback=progress_callback,
         )
+    elif model_type == "残差分解混合(进阶)":
+        # 两阶段：SARIMA 捕获线性 → Prophet 学习残差非线性 → 叠加（对齐旧库 HybridPredictor）
+        result = ps.residual_hybrid_forecast(
+            values, timestamps, days,
+            changepoint_prior_scale=cp, seasonality_prior_scale=season,
+            progress_callback=progress_callback,
+        )
     else:
         result = ps.hybrid_forecast(
             values, timestamps, days,
+            use_grid_search=use_grid_search,
             changepoint_prior_scale=cp, seasonality_prior_scale=season,
             progress_callback=progress_callback,
         )
@@ -270,10 +279,17 @@ with tab1:
         days = st.number_input("预测天数", min_value=1, max_value=30, value=7, step=1)
         cp = st.slider("变化点灵敏度 (Prophet)", 0.001, 0.5, 0.05, 0.01)
         season = st.slider("季节性强度 (Prophet)", 0.1, 20.0, 10.0, 0.1)
+        # 网格搜索仅作用于权重融合模式（残差分解模式固定参数以保证两阶段可比性）
+        use_grid_search = st.toggle(
+            "SARIMA 参数网格搜索（按 AIC 选优，更准但更慢）",
+            value=True, disabled=model_type != "Prophet+SARIMA(推荐)",
+            help="对 5 组候选 (p,d,q)(P,D,Q,24) 按 AIC 选优；关闭时使用固定 (1,1,1)(1,1,1,24)。",
+        )
         if st.button("执行预测", type="primary", icon=":material/timeline:"):
             _launch(_compute_univariate, {
                 "metric_label": metric_label, "model_type": model_type,
                 "days": int(days), "cp": cp, "season": season,
+                "use_grid_search": use_grid_search,
             })
     else:
         days = st.number_input("预测天数", min_value=1, max_value=15, value=7, step=1)

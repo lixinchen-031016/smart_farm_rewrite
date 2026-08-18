@@ -59,6 +59,54 @@ def group_and_aggregate(
 
 # ----------------------------- 智能解读（对齐旧版 enhanced_analysis） -----------------------------
 
+
+def cross_pivot(
+    df: pd.DataFrame, row_column: str, col_column: str, agg_column: str, agg_function: str
+) -> pd.DataFrame:
+    """交叉透视表：按 row×col 双维度聚合（交叉热力图数据源，高级分析独有能力）。
+
+    校验规则与 `group_and_aggregate` 一致，非法输入抛 ValueError。
+    """
+    for c in (row_column, col_column, agg_column):
+        if c not in df.columns:
+            raise ValueError(f"列不存在：{c}")
+    if agg_column not in df.select_dtypes(include=[np.number]).columns:
+        raise ValueError("聚合列必须是数值列")
+    if agg_function not in _AGG_FUNCS:
+        raise ValueError(f"不支持的聚合方式：{agg_function}（可选 {list(_AGG_FUNCS.keys())}）")
+    if row_column == col_column:
+        raise ValueError("行维度与列维度不能相同")
+
+    pivot = df.pivot_table(
+        index=row_column, columns=col_column, values=agg_column, aggfunc=_AGG_FUNCS[agg_function]
+    )
+    return pivot.round(2)
+
+
+def cross_pivot_insight(
+    pivot: pd.DataFrame,
+    agg_column: str,
+    row_names: Optional[dict] = None,
+) -> Optional[str]:
+    """交叉透视峰值洞察：返回最大/最小单元格的中文描述；空表返回 None。"""
+    if pivot.empty:
+        return None
+    stacked = pivot.stack()
+    if stacked.empty:
+        return None
+    (r_hi, c_hi) = stacked.idxmax()
+    (r_lo, c_lo) = stacked.idxmin()
+    names = row_names or {}
+
+    def _fmt(v):
+        return names.get(v, v)
+
+    return (
+        f"{agg_column} 峰值出现在 {_fmt(r_hi)} 的 {_fmt(c_hi)} 时（{stacked.max():.2f}），"
+        f"谷值在 {_fmt(r_lo)} 的 {_fmt(c_lo)} 时（{stacked.min():.2f}）。"
+    )
+
+
 # 农业指标解读阈值（对齐旧版）
 _METRIC_RULES = {
     "temperature": {"low": 15, "high": 30, "unit": "°C"},

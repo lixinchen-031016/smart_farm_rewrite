@@ -91,3 +91,79 @@ def collect_system_info() -> Optional[dict[str, Any]]:
         }
     except Exception:  # noqa: BLE001
         return None
+
+
+# ----------------------------- 网络 / 磁盘 IO（补齐旧库差距） -----------------------------
+
+
+def collect_network_io(interval: float = 0.5) -> dict[str, Any]:
+    """网络 IO（对齐旧库「网络与存储」标签页）。
+
+    采样 interval 秒计算收发速率；返回累计字节数/包数与实时速率。
+    psutil 不可用或采集失败返回空 dict。
+    """
+    if not PSUTIL_AVAILABLE:
+        return {}
+    try:
+        import time
+
+        c1 = psutil.net_io_counters()
+        time.sleep(max(0.0, interval))
+        c2 = psutil.net_io_counters()
+        dt = interval if interval > 0 else 1e-6
+        return {
+            "bytes_sent": c2.bytes_sent,
+            "bytes_recv": c2.bytes_recv,
+            "packets_sent": c2.packets_sent,
+            "packets_recv": c2.packets_recv,
+            "send_rate_mb_s": round((c2.bytes_sent - c1.bytes_sent) / dt / 1024 / 1024, 3),
+            "recv_rate_mb_s": round((c2.bytes_recv - c1.bytes_recv) / dt / 1024 / 1024, 3),
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def collect_disk_io() -> dict[str, Any]:
+    """磁盘 IO 累计计数（自系统启动起；部分平台/虚拟环境不支持时返回空 dict）。"""
+    if not PSUTIL_AVAILABLE:
+        return {}
+    try:
+        c = psutil.disk_io_counters()
+        if c is None:
+            return {}
+        return {
+            "read_count": c.read_count,
+            "write_count": c.write_count,
+            "read_mb": round(c.read_bytes / 1024 / 1024, 1),
+            "write_mb": round(c.write_bytes / 1024 / 1024, 1),
+            "read_time_s": round(c.read_time / 1000, 1) if c.read_time else 0.0,
+            "write_time_s": round(c.write_time / 1000, 1) if c.write_time else 0.0,
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def collect_disk_partitions() -> list[dict[str, Any]]:
+    """磁盘分区与挂载点（含容量与使用率，对齐旧库分区列表）。"""
+    if not PSUTIL_AVAILABLE:
+        return []
+    rows: list[dict[str, Any]] = []
+    try:
+        for p in psutil.disk_partitions(all=False):
+            try:
+                usage = psutil.disk_usage(p.mountpoint)
+                rows.append(
+                    {
+                        "设备": p.device,
+                        "挂载点": p.mountpoint,
+                        "文件系统": p.fstype,
+                        "总容量 (GB)": round(usage.total / 1024**3, 1),
+                        "已用 (GB)": round(usage.used / 1024**3, 1),
+                        "使用率 (%)": usage.percent,
+                    }
+                )
+            except (PermissionError, OSError):
+                continue
+    except Exception:  # noqa: BLE001
+        return []
+    return rows

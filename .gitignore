@@ -31,3 +31,4 @@ predictions_exports/
 
 # OS
 .DS_Store
+/skill/

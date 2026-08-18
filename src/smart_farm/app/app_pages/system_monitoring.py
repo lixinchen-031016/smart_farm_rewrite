@@ -29,8 +29,10 @@ st.title("系统监控")
 if not require_admin():
     st.stop()
 
-tab1, tab2, tab3, tab4 = st.tabs(["数据量与质量", "实时监控", "性能分析", "系统信息"],
-                                  on_change="rerun")
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["数据量与质量", "实时监控", "性能分析", "系统信息", "网络与磁盘 IO"],
+    on_change="rerun",
+)
 
 with tab1:
     if not tab1.open:
@@ -130,3 +132,47 @@ with tab4:
         info = sys_svc.collect_system_info()
         if info:
             st.json(info)
+
+with tab5:
+    st.subheader("网络与磁盘 IO")
+    if not tab5.open:
+        st.caption("切换到本标签页查看网络与磁盘 IO。")
+    elif not sys_svc.is_psutil_available():
+        st.warning("未安装 psutil，网络与磁盘 IO 不可用。请先安装项目完整依赖：`uv pip install -e .`。")
+    else:
+        st.markdown("**网络 IO**（采样 0.5 秒计算速率）")
+        net = sys_svc.collect_network_io(interval=0.5)
+        if net:
+            c1, c2 = st.columns(2)
+            c1.metric("发送速率", f"{net['send_rate_mb_s']} MB/s")
+            c2.metric("接收速率", f"{net['recv_rate_mb_s']} MB/s")
+            st.caption(
+                f"累计发送 {net['bytes_sent'] / 1024 / 1024:.1f} MB"
+                f"（{net['packets_sent']:,} 包）；"
+                f"累计接收 {net['bytes_recv'] / 1024 / 1024:.1f} MB"
+                f"（{net['packets_recv']:,} 包）"
+            )
+        else:
+            st.info("网络 IO 采集不可用。")
+
+        st.markdown("**磁盘 IO**（自系统启动累计）")
+        disk = sys_svc.collect_disk_io()
+        if disk:
+            c3, c4, c5, c6 = st.columns(4)
+            c3.metric("读次数", f"{disk['read_count']:,}")
+            c4.metric("写次数", f"{disk['write_count']:,}")
+            c5.metric("读取量", f"{disk['read_mb']:,} MB")
+            c6.metric("写入量", f"{disk['write_mb']:,} MB")
+            st.caption(
+                f"读耗时 {disk['read_time_s']} s；写耗时 {disk['write_time_s']} s。"
+                "（部分平台/虚拟环境不支持磁盘 IO 统计）"
+            )
+        else:
+            st.info("当前平台不支持磁盘 IO 统计（psutil.disk_io_counters 不可用）。")
+
+        st.markdown("**磁盘分区**")
+        parts = sys_svc.collect_disk_partitions()
+        if parts:
+            st.dataframe(pd.DataFrame(parts), width="stretch")
+        else:
+            st.info("未获取到分区信息。")

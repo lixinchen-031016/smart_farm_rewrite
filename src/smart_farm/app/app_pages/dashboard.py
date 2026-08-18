@@ -97,6 +97,24 @@ def _load_latest() -> dict[str, float | None]:
     return _load_latest_cached()
 
 
+@st.cache_data(ttl=300, max_entries=8)
+def _predict_trend_cached(
+    metric: str, hours: int, values: tuple, timestamps: tuple
+) -> dict:
+    """趋势图短期预测线（缓存 5 分钟）：Prophet 短期预测，失败自动回退末值平推。
+
+    升级：此前为 naive 兜底（对齐旧库 Prophet 叠加的降级实现），现对齐旧库体验。
+    values/timestamps 以 tuple 传入以构成可靠缓存键。
+    """
+    ts = pd.to_datetime(list(timestamps))
+    res = ps.short_term_forecast(list(values), ts, hours=min(hours, 24))
+    return {
+        "ds": [str(d) for d in res.forecast["ds"]],
+        "yhat": res.forecast["yhat"].tolist(),
+        "method": res.method,
+    }
+
+
 def _load_trend(metric: str, hours: int) -> pd.DataFrame:
     db_metric = METRIC_DB[metric]
     _, col, _ = METRICS[metric]
@@ -229,12 +247,17 @@ if show_anomalies:
                                  mode="markers", name="异常点",
                                  marker={"color": "#E24B4A", "symbol": "x", "size": 10}))
 
-# 1 天预测（naive 兜底，对齐旧库 Prophet 1 步）
+# 1 天预测（Prophet 短期预测，失败回退末值平推；对齐旧库 Prophet 叠加）
+pred_method = ""
 if show_prediction:
     try:
-        res = ps.naive_forecast(df["value"].tolist(), df["timestamp"].tolist(), prediction_days=1)
-        fc = res.forecast
-        fig.add_trace(go.Scatter(x=fc["ds"], y=fc["yhat"], mode="lines", name="1 天预测",
+        pred = _predict_trend_cached(
+            metric, hours,
+            tuple(df["value"].tolist()), tuple(df["timestamp"].tolist()),
+        )
+        pred_method = "Prophet" if pred["method"].startswith("prophet") else "朴素"
+        fig.add_trace(go.Scatter(x=pred["ds"], y=pred["yhat"], mode="lines",
+                                 name=f"短期预测({pred_method})",
                                  line={"color": "#D85A30", "dash": "dash"}))
     except Exception:  # noqa: BLE001 预测失败不影响主图
         pass
@@ -255,4 +278,4 @@ fig.update_layout(
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
 )
 st.plotly_chart(fig, width="stretch")
-st.caption("异常点基于 IQR 法；预测线为朴素兜底（1 天）。可在「自定义告警阈值配置」调整阈值与作物阶段。")
+st.caption("异常点基于 IQR 法；预测线为 Prophet 短期预测（3H 步长，不可用时自动回退朴素法）。可在「自定义告警阈值配置」调整阈值与作物阶段。")

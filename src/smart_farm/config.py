@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 1440
     bcrypt_rounds: int = 12
 
+    # 登录限流（memory：进程内单 worker；redis：多 worker 共享，需另装 redis 包）
+    login_rate_limit_backend: str = "memory"
+    login_rate_limit_redis_url: str = "redis://localhost:6379/0"
+    login_rate_limit_max_attempts: int = 10
+    login_rate_limit_window_seconds: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:
