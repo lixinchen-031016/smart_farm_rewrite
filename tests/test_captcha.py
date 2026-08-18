@@ -1,5 +1,6 @@
 """captcha_service 测试（纯函数）。"""
 
+from smart_farm.app import captcha_ui as cu
 from smart_farm.services import captcha_service as cs
 
 
@@ -41,3 +42,16 @@ def test_verify_captcha_case_and_space_insensitive():
     assert cs.verify_captcha("  A3K9Z ", "A3K9Z")
     assert cs.verify_captcha("", "A3K9Z") is False
     assert cs.verify_captcha("WRONG", "A3K9Z") is False
+
+
+def test_captcha_bypass_env(monkeypatch):
+    """测试缝：SF_TEST_CAPTCHA=1 时校验直接通过（E2E 登录用，默认关闭）。"""
+    monkeypatch.setenv("SF_TEST_CAPTCHA", "1")
+    assert cu.validate_captcha_input("任意输入") is True
+    assert cu.validate_captcha_input("") is True  # 旁路时不校验内容
+
+
+def test_captcha_bypass_off_by_default(monkeypatch):
+    """测试缝默认关闭：未设置环境变量时走正常校验路径。"""
+    monkeypatch.delenv("SF_TEST_CAPTCHA", raising=False)
+    assert cu._test_bypass_enabled() is False

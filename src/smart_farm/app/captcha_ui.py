@@ -3,11 +3,22 @@
 - 用 `st.image` 原生展示 PNG（不用 base64 HTML，遵循技能规范）。
 - 验证码文本与图片存于 `st.session_state[f"captcha_{key}"]` / `[f"captcha_{key}_image"]`。
 - 提供刷新按钮，点按重新生成并 rerun。
+- **测试缝**：环境变量 `SF_TEST_CAPTCHA=1` 时跳过校验（仅供 E2E 自动化登录，
+  默认关闭，生产行为不变）。
 """
+
+import os
 
 import streamlit as st
 
 from smart_farm.services import captcha_service as cs
+
+TEST_BYPASS_ENV = "SF_TEST_CAPTCHA"
+
+
+def _test_bypass_enabled() -> bool:
+    """E2E 测试旁路开关（默认关闭）。"""
+    return os.environ.get(TEST_BYPASS_ENV) == "1"
 
 
 def initialize_captcha(session_key: str = "login") -> None:
@@ -48,6 +59,8 @@ def validate_captcha_input(
 
     修复：校验成功后立即销毁会话验证码（防重放——同一验证码不可被再次使用）。
     """
+    if _test_bypass_enabled():  # E2E 测试缝：仅 SF_TEST_CAPTCHA=1 时生效
+        return True
     expected = st.session_state.get(f"captcha_{session_key}", "")
     if not user_input:
         st.error(f"请输入{field_name}。")

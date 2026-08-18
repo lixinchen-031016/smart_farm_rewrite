@@ -129,14 +129,13 @@ def _tab_rules(df: pd.DataFrame) -> None:
     st.markdown("**规则管理**")
     c1, c2 = st.columns(2)
     with c1:
-        if st.download_button(
+        st.download_button(
             "导出规则 JSON",
             data=(st.session_state.get(RULE_KEY) or cs.create_agricultural_standard_template()).to_json(),
             file_name="cleaning_rule.json",
             mime="application/json",
             icon=":material/download:",
-        ):
-            pass
+        )
     with c2:
         uploaded = st.file_uploader("加载规则 JSON", type=["json"], key="rule_upload")
         if uploaded is not None:

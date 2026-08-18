@@ -153,3 +153,27 @@ def test_fetch_data_in_bulk_offsets_match(session):
     assert len(df) == 1
     assert df["soil_moisture"].iloc[0] == 30.0
     assert df["light_intensity"].iloc[0] == 1000.0
+
+
+# ----------------------------- TDD 第三轮：system_service 进程/系统信息 -----------------------------
+
+
+def test_collect_process_info_returns_metrics():
+    """行为：psutil 可用时返回当前进程指标列表（PID/内存/CPU）。"""
+    pytest.importorskip("psutil")
+    info = ss.collect_process_info()
+    assert isinstance(info, list)
+    if info:  # 进程信息采集成功
+        labels = {row["指标"] for row in info}
+        assert "PID" in labels and "内存 RSS (MB)" in labels
+        assert all(row["值"] is not None for row in info)
+
+
+def test_collect_system_info_returns_dict():
+    """行为：psutil 可用时返回系统信息 dict（CPU 数/内存）。"""
+    pytest.importorskip("psutil")
+    info = ss.collect_system_info()
+    if info is not None:
+        assert "cpu_count" in info
+        assert isinstance(info["cpu_count"], int)
+        assert info["memory_total_gb"] > 0

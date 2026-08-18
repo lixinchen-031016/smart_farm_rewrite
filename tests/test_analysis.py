@@ -145,3 +145,26 @@ def test_docx_generation(tmp_path):
 
     assert Path(out).exists()
     assert Path(out).stat().st_size > 500
+
+
+# ----------------------------- TDD 第三轮：边界行为固化 -----------------------------
+
+
+def test_describe_data_no_numeric_returns_empty():
+    """行为：全非数值列时描述统计返回空 DataFrame 而非崩溃。"""
+    df = pd.DataFrame({"name": ["a", "b"], "tag": ["x", "y"]})
+    out = az.describe_data(df)
+    assert out.empty
+
+
+def test_calculate_correlation_single_numeric_returns_none():
+    """行为：数值列不足 2 列时相关性返回 None（UI 层据此提示）。"""
+    df = pd.DataFrame({"a": [1, 2, 3]})
+    assert az.calculate_correlation(df) is None
+
+
+def test_group_aggregate_non_numeric_col_rejected():
+    """行为：对非数值列聚合抛出明确 ValueError。"""
+    df = pd.DataFrame({"grp": ["x", "x"], "name": ["a", "b"]})
+    with pytest.raises(ValueError, match="数值列"):
+        az.group_and_aggregate(df, "grp", "name", "平均值")

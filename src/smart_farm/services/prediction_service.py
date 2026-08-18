@@ -8,10 +8,22 @@
 """
 
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import numpy as np
 import pandas as pd
+
+ProgressCallback = Callable[[float, str], None]
+
+
+def _emit(callback: Optional[ProgressCallback], pct: float, stage: str) -> None:
+    """安全触发进度回调（回调异常不影响预测本身）。"""
+    if callback is None:
+        return
+    try:
+        callback(pct, stage)
+    except Exception:  # noqa: BLE001 进度回调失败不应中断预测
+        pass
 
 
 @dataclass
@@ -91,6 +103,7 @@ def prophet_forecast(
     prediction_days: int = 7,
     changepoint_prior_scale: float = 0.05,
     seasonality_prior_scale: float = 10.0,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> ForecastResult:
     """Prophet 预测（懒加载，未安装 prophet 时抛出明确异常）。
 
@@ -103,6 +116,7 @@ def prophet_forecast(
             "未安装 prophet。请先安装项目完整依赖：`uv pip install -e .`。"
         ) from exc
 
+    _emit(progress_callback, 0.2, "Prophet 拟合中")
     hist = _to_tsdf(values, timestamps)
     m = Prophet(
         yearly_seasonality=False,
@@ -116,6 +130,7 @@ def prophet_forecast(
     future = m.make_future_dataframe(periods=prediction_days, freq="D")
     pred = m.predict(future)
     fc = pred[["ds", "yhat", "yhat_lower", "yhat_upper"]].tail(prediction_days).reset_index(drop=True)
+    _emit(progress_callback, 1.0, "完成")
     return ForecastResult(
         history=hist,
         forecast=fc,
@@ -214,6 +229,7 @@ def hybrid_forecast(
     use_grid_search: bool = True,
     changepoint_prior_scale: float = 0.05,
     seasonality_prior_scale: float = 10.0,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> ForecastResult:
     """Prophet + SARIMA 权重融合预测（对齐旧版 sarima_validation_prediction）。
 
@@ -221,6 +237,7 @@ def hybrid_forecast(
     SARIMA 或 Prophet 不可用时回退到可用的单模型 / naive。
     修复：透传 changepoint/seasonality 参数（UI 滑块此前无效）。
     """
+    _emit(progress_callback, 0.05, "数据预处理")
     prepared = prepare_series(values, timestamps)
     if len(prepared) < 2:
         return naive_forecast(values, timestamps, prediction_days)
@@ -237,6 +254,7 @@ def hybrid_forecast(
     sarima_rmse = prophet_rmse = float("inf")
 
     # ---- SARIMA 拟合 ----
+    _emit(progress_callback, 0.2, "SARIMA 拟合中")
     try:
         from statsmodels.tsa.statespace.sarimax import SARIMAX  # type: ignore
 
@@ -263,6 +281,7 @@ def hybrid_forecast(
         sarima_ok = False
 
     # ---- Prophet 拟合（懒加载） ----
+    _emit(progress_callback, 0.5, "Prophet 拟合中")
     try:
         from prophet import Prophet  # type: ignore
 
@@ -276,11 +295,13 @@ def hybrid_forecast(
         pred = m.predict(future)
         prophet_pred = pred["yhat"].reset_index(drop=True)
         prophet_pred.index = forecast_dates
-        # Prophet 历史拟合 RMSE
-        fitted_hist = m.predict(fit_df[["ds"]])["yhat"].reset_index(drop=True)
-        mask = fitted_hist.notna() & prepared["y"].notna()
+        # Prophet 历史拟合 RMSE（修复：reset_index 后索引与 prepared 不一致，
+        # Series 布尔索引对齐会产生长度翻倍的 mask → IndexError，改用 numpy 数组）
+        fitted_hist = m.predict(fit_df[["ds"]])["yhat"].to_numpy()
+        actual = prepared["y"].to_numpy()
+        mask = ~np.isnan(fitted_hist) & ~np.isnan(actual)
         if mask.sum() > 0:
-            prophet_rmse = float(np.sqrt(np.mean((prepared["y"].values[mask] - fitted_hist.values[mask]) ** 2)))
+            prophet_rmse = float(np.sqrt(np.mean((actual[mask] - fitted_hist[mask]) ** 2)))
         else:
             prophet_rmse = float("inf")
         if np.isfinite(prophet_rmse) and not np.isnan(prophet_pred.values).all():
@@ -289,6 +310,7 @@ def hybrid_forecast(
         prophet_ok = False
 
     # ---- 权重融合 ----
+    _emit(progress_callback, 0.85, "权重融合中")
     if sarima_ok and prophet_ok:
         if manual_prophet_weight + manual_sarima_weight == 1.0:
             w_p, w_s = manual_prophet_weight, manual_sarima_weight
@@ -330,6 +352,7 @@ def hybrid_forecast(
             "yhat_upper": (combined + 1.96 * band).values,
         }
     )
+    _emit(progress_callback, 1.0, "完成")
     return ForecastResult(
         history=prepared.reset_index().rename(columns={"index": "ds", "y": "y"}),
         forecast=fc,
@@ -348,6 +371,7 @@ def multivariate_forecast(
     n_estimators: int = 100,
     use_lag_features: bool = True,
     use_interaction: bool = True,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict, str]:
     """多变量随机森林预测（对齐旧版 multivariate_prediction）。
 
@@ -362,6 +386,7 @@ def multivariate_forecast(
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("未安装 scikit-learn。请先安装项目完整依赖：`uv pip install -e .`。") from exc
 
+    _emit(progress_callback, 0.1, "数据合并")
     merged = pd.DataFrame(
         {
             "ds": pd.to_datetime(list(timestamps)),
@@ -394,6 +419,7 @@ def multivariate_forecast(
     y_temp = work["temperature"]
     y_humid = work["humidity"]
 
+    _emit(progress_callback, 0.5, "随机森林训练中")
     rf_temp = RandomForestRegressor(n_estimators=n_estimators, random_state=42, n_jobs=-1)
     rf_humid = RandomForestRegressor(n_estimators=n_estimators, random_state=42, n_jobs=-1)
     rf_temp.fit(X, y_temp)
@@ -410,6 +436,7 @@ def multivariate_forecast(
     feature_importance["humid_importance_pct"] = (feature_importance["humid_importance"] * 100).round(2)
 
     # 多步递归预测（逐点用前一轮预测值填充 lag）
+    _emit(progress_callback, 0.85, "递归预测中")
     last = work.iloc[-1].copy()
     rows = []
     for step in range(prediction_days * POINTS_PER_DAY):
@@ -440,6 +467,7 @@ def multivariate_forecast(
 
     forecast_df = pd.DataFrame(rows)
 
+    _emit(progress_callback, 1.0, "完成")
     feature_name_map = {
         "temperature": "温度",
         "humidity": "湿度",

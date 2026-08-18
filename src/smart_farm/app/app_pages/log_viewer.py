@@ -78,15 +78,15 @@ with st.expander("高级过滤"):
     level = st.selectbox("日志级别", ["ALL", "INFO", "WARNING", "ERROR", "DEBUG"])
     user = st.selectbox("用户名", ["ALL"] + all_users)
     action = st.selectbox("操作类型", ["ALL"] + all_actions)
-    search_mode = st.radio("搜索模式", ["AND (且)", "OR (或)", "EXACT (精确)"], horizontal=True)
+    search_mode = st.segmented_control("搜索模式", ["AND (且)", "OR (或)", "EXACT (精确)"], default="AND (且)")
 
 logs = [SimpleNamespace(**d) for d in _load_logs(start_dt.isoformat(), end_dt.isoformat())]
 if level != "ALL":
-    logs = [log for log in logs if log["log_level"] == level]
+    logs = [log for log in logs if log.log_level == level]
 if user != "ALL":
-    logs = [log for log in logs if log["username"] == user]
+    logs = [log for log in logs if log.username == user]
 if action != "ALL":
-    logs = [log for log in logs if log["action_type"] == action]
+    logs = [log for log in logs if log.action_type == action]
 
 # 关键词过滤（AND/OR/EXACT 全可用，修复旧库恒 AND 死代码）
 if keyword.strip():

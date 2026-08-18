@@ -210,3 +210,21 @@ def test_generate_report_text():
     text = cs.DataCleaner().generate_report(report)
     assert "原数据形状" in text
     assert "填充" in text
+
+
+# ----------------------------- TDD 第三轮：规则引擎 zscore 分支 -----------------------------
+
+
+def test_apply_rule_zscore_outlier_removal():
+    """行为：规则引擎 zscore 异常检测 + 移除分支正确执行（修复前仅 iqr 被测试）。"""
+    # 互不重复的正常值（避免触发模板默认"去重"规则）+ 单极端值
+    normal = [20.0 + i * 0.1 for i in range(29)]  # 20.0~22.8 线性递增，互不重复
+    df = pd.DataFrame({
+        "temperature": normal + [99.9],
+        "humidity": [50.0] * 30,
+    })
+    rule = cs.create_agricultural_standard_template()
+    rule.configure_outlier_detection("zscore", {"columns": ["temperature"], "threshold": 3.0, "remove": True})
+    out, report = cs.DataCleaner().apply_rule(df, rule)
+    assert len(out) == 29  # 仅 99.9 被移除
+    assert any(op["type"] == "outlier_removal" and op["method"] == "zscore" for op in report["operations"])
